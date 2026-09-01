@@ -75,7 +75,13 @@ RUN pnpm --filter @identity/config build && \
 #
 # The generated Prisma client is set aside across it: it lives under node_modules/.prisma but
 # belongs to no package, so whether the install treats it as extraneous is not something to leave to
-# chance in the one artifact that reaches staging.
+# chance in the one artifact that reaches staging.#
+# `rm -rf node_modules` before the install, and that is the part that matters. `pnpm install --prod`
+# re-links each project's node_modules but does not garbage-collect the virtual store underneath, so
+# vitest, eslint, turbo and the Nest CLI all survived into the shipped image — the manifest said
+# production and the filesystem said otherwise. Removing the tree first makes the prod install
+# materialise only what production actually resolves. Packages come from the build stage's
+# content-addressable store, so this costs seconds, not a re-download.
 RUN --mount=type=secret,id=npm_token --mount=type=secret,id=ca_bundle \
     NODE_EXTRA_CA_CERTS="$([ -f /etc/ssl/certs/build-proxy.pem ] && echo /etc/ssl/certs/build-proxy.pem || true)" \
     CI=true \
@@ -83,6 +89,7 @@ RUN --mount=type=secret,id=npm_token --mount=type=secret,id=ca_bundle \
       T="$(cat /run/secrets/npm_token)"; \
       printf "//npm.pkg.github.com/:_authToken=%s\n//npm.pkg.github.com/:always-auth=true\n" "$T" > /root/.npmrc; \
       cp -r node_modules/.prisma /tmp/prisma-client; \
+      rm -rf node_modules apps/*/node_modules packages/*/node_modules packages/modules/*/node_modules; \
       pnpm install --prod --frozen-lockfile; \
       rm -rf node_modules/.prisma; \
       cp -r /tmp/prisma-client node_modules/.prisma; \

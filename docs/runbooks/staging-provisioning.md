@@ -205,3 +205,31 @@ make the wrong-issuer, wrong-audience and database-isolation checks meaningful; 
 script prints `skip` rather than passing something it did not test.
 
 Anything less than all of them passing is not a staging environment yet.
+
+## Running the integration suite (never against a live database)
+
+`@identity/testing` truncates every table it knows about in `beforeAll`. That is correct for a test
+suite and catastrophic if it is pointed somewhere else — during Phase 11 it was aimed at the staging
+Identity database to run against a real PostgreSQL, and it emptied it. Recovery took one
+`pg_restore` and no data was lost that mattered, because staging data is synthetic and disposable by
+policy; the lesson is the guard, not the outage.
+
+`truncateAll` now refuses a database whose name does not identify it as a throwaway. Give it one:
+
+```bash
+# A throwaway with the same shape, ownership and grants as the real thing — the parity is the point,
+# because RLS is a property of roles meeting policies and a hand-rolled schema does not reproduce it.
+psql -U postgres -c 'create database identity_test owner identity_mig'
+pg_dump -U postgres -d identity --schema-only | psql -U postgres -d identity_test
+psql -U postgres -d identity_test -tAc \
+  "select 'alter table public.'||tablename||' owner to identity_mig;' from pg_tables where schemaname='public'" \
+  | psql -U postgres -d identity_test
+
+TEST_DATABASE_URL=postgresql://identity_app:…@…/identity_test \
+TEST_DIRECT_DATABASE_URL=postgresql://identity_mig:…@…/identity_test \
+  pnpm --filter @identity/testing test:integration
+```
+
+The ownership reassignment is not optional: `pg_dump` restored as a superuser leaves the tables owned
+by that superuser, `FORCE ROW LEVEL SECURITY` does not constrain a superuser, and the RLS suite then
+proves nothing while passing.

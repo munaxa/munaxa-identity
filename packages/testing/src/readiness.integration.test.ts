@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import pg from 'pg';
 
-import { OWNER_URL } from './index.js';
+import { OWNER_URL, assertDestroyable } from './index.js';
 import { REQUIRED_TABLES, probeReadiness } from '../../../apps/api/src/health/readiness.js';
 
 /**
@@ -89,5 +89,23 @@ describe('readiness', () => {
     // without this failing.
     const probe = await probeReadiness(realDatabase(), security({}));
     expect(probe).toEqual({ ok: true });
+  });
+});
+
+describe('the harness refuses to destroy a database that is in use', () => {
+  it('accepts a name that identifies a throwaway', () => {
+    for (const name of ['identity_test', 'test_identity', 'identity-test', 'testing']) {
+      expect(() => assertDestroyable(`postgresql://u:p@localhost:5432/${name}`)).not.toThrow();
+    }
+  });
+
+  it('refuses a name that does not', () => {
+    // The exact mistake this guard exists for: the suite was pointed at a live staging database
+    // and `truncateAll` emptied it, because nothing in the harness could tell the difference.
+    for (const name of ['identity', 'work', 'identity_staging', 'production']) {
+      expect(() => assertDestroyable(`postgresql://u:p@db.example:5432/${name}`)).toThrow(
+        /Refusing to truncate/,
+      );
+    }
   });
 });

@@ -100,7 +100,33 @@ export const createAccount = async (
 };
 
 /** Remove everything this suite wrote, as the owner, so a rerun starts clean. */
+/**
+ * The name a database must have before this harness will destroy it.
+ *
+ * `truncateAll` empties every table it knows about, and it runs in `beforeAll`. Point the suite at
+ * the wrong `TEST_DATABASE_URL` and it does exactly what it was written to do, to whatever is
+ * there — which is how a staging Identity database got emptied during Phase 11: the URLs were
+ * exported to run the suite against a real PostgreSQL, and the suite could not tell that this one
+ * was in use. Nothing in the harness had any way to know, so nothing warned.
+ *
+ * A name check is a crude guard and a sufficient one: a throwaway database is trivially named for
+ * what it is, and no deployment ever will be.
+ */
+const DESTROYABLE = /(^|[_-])test(ing)?([_-]|$)/;
+
+/** Fail before touching anything if the target does not look like a throwaway database. */
+export const assertDestroyable = (connectionString: string): void => {
+  const name = new URL(connectionString).pathname.replace(/^\//, '');
+  if (DESTROYABLE.test(name)) return;
+  throw new Error(
+    `Refusing to truncate "${name}": this harness empties every table and the database name does ` +
+      'not identify it as a throwaway. Point TEST_DATABASE_URL and TEST_DIRECT_DATABASE_URL at a ' +
+      'database whose name contains "test" — never at one that is in use.',
+  );
+};
+
 export const truncateAll = async (owner: pg.PoolClient): Promise<void> => {
+  assertDestroyable(OWNER_URL);
   await owner.query(
     `truncate identity_audit_event, identity_reset_token, identity_role_assignment,
               identity_refresh_token, identity_session, identity_role, identity_account,
