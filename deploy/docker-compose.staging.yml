@@ -178,6 +178,10 @@ services:
       PLATFORM_AUTH_AUDIENCE: munaxa-work
       PLATFORM_AUTH_ALGORITHM: ES256
       PLATFORM_AUTH_PUBLIC_KEYS: ${PLATFORM_AUTH_PUBLIC_KEYS:?set PLATFORM_AUTH_PUBLIC_KEYS to Identity's public key}
+      # Provenance in the logs. Without these Work reports version 0.0.0, and a log line that
+      # cannot be tied back to a commit is a log line you cannot act on during an incident.
+      APP_VERSION: ${WORK_VERSION:-0.1.0}
+      BUILD_SHA: ${WORK_BUILD_SHA:-unknown}
     depends_on:
       cache: { condition: service_healthy }
     healthcheck:
@@ -185,11 +189,12 @@ services:
         - CMD
         - node
         - -e
-        # `/api/health/ready`, with the prefix. Work sets a global prefix of `API_PREFIX` (default
-        # `api`) and the health controller is version-neutral, so the unprefixed path 404s — which
-        # would leave work-api permanently unhealthy and the front door, which waits on it, never
-        # starting at all.
-        - "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        # `/health/ready`, deliberately *without* the `API_PREFIX`. Munaxa Work excludes the health
+        # controller from its global prefix and from versioning so that an orchestrator's probe URL
+        # does not move when the API version does — so the prefixed path is the one that 404s, and
+        # a probe pointed at it leaves work-api permanently unhealthy and the front door, which
+        # waits on it, never starting at all.
+        - "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 15s
       timeout: 3s
       start_period: 20s

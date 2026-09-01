@@ -24,12 +24,28 @@ import Redis from 'ioredis';
 export interface CacheHandle {
   readonly cache: CachePort;
   readonly kind: 'redis' | 'memory';
+  /**
+   * Whether the cache is actually reachable *now*, for readiness to ask.
+   *
+   * Not the same question as `kind`. A handle opened against Redis keeps saying `redis` after the
+   * server goes away, and the three things above degrade the moment it does: with the cache down,
+   * sign-in fails — closed, which is right — but a readiness probe that only touches the database
+   * keeps answering 200, so the load balancer goes on sending every sign-in to a replica that
+   * refuses all of them. The probe has to ask the cache the same question it asks the database.
+   */
+  reachable(): Promise<boolean>;
   close(): Promise<void>;
 }
 
 export const openCache = async (redisUrl: string): Promise<CacheHandle> => {
   if (redisUrl.trim() === '') {
-    return { cache: new MemoryCache(), kind: 'memory', close: () => Promise.resolve() };
+    // An in-process cache is reachable exactly as long as the process is.
+    return {
+      cache: new MemoryCache(),
+      kind: 'memory',
+      reachable: () => Promise.resolve(true),
+      close: () => Promise.resolve(),
+    };
   }
   const client = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 3 });
   await client.connect();
@@ -37,6 +53,13 @@ export const openCache = async (redisUrl: string): Promise<CacheHandle> => {
   return {
     cache: new RedisCache(client as unknown as RedisLike, { keyPrefix: 'identity:' }),
     kind: 'redis',
+    reachable: async () => {
+      try {
+        return (await client.ping()) === 'PONG';
+      } catch {
+        return false;
+      }
+    },
     close: async () => {
       await client.quit();
     },

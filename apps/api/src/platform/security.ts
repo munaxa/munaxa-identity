@@ -48,6 +48,8 @@ export interface SecurityStack {
   readonly tenants: TenantDirectory;
   readonly signing: SigningKey;
   readonly cacheKind: 'redis' | 'memory';
+  /** Whether the cache is reachable right now. Readiness asks; see `CacheHandle.reachable`. */
+  cacheReachable(): Promise<boolean>;
   readonly limitEnforcement: string;
   close(): Promise<void>;
 }
@@ -171,6 +173,7 @@ export const buildSecurityStack = async (
     tenants: new TenantDirectory(prisma),
     signing,
     cacheKind: handle.kind,
+    cacheReachable: () => handle.reachable(),
     limitEnforcement: sessions.limitEnforcement,
     close: () => handle.close(),
   };

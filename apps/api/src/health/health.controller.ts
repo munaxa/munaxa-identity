@@ -1,4 +1,4 @@
-import { Controller, Get, Inject } from '@nestjs/common';
+import { Controller, Get, Inject, ServiceUnavailableException } from '@nestjs/common';
 
 import { ENVIRONMENT, SECURITY_STACK } from '../tokens.js';
 import { PrismaService } from '../persistence/prisma.service.js';
@@ -9,9 +9,15 @@ import type { IdentityEnvironment } from '@identity/config';
  * Liveness and readiness, split because they answer different questions.
  *
  * `live` says the process is running and should not be restarted. `ready` says it can serve — it
- * touches the database, because an authentication service that cannot reach its accounts is not
- * ready no matter how healthy the process is, and a load balancer that cannot tell the difference
- * will happily send every sign-in to a replica that refuses all of them.
+ * touches the database *and* the cache, because an authentication service that cannot reach its
+ * accounts is not ready no matter how healthy the process is, and a load balancer that cannot tell
+ * the difference will happily send every sign-in to a replica that refuses all of them.
+ *
+ * The cache counts for the same reason the database does, and it was left out at first: with Redis
+ * stopped, sign-in fails closed — nobody is authenticated, which is the important part — but it
+ * fails with a 401, indistinguishable to the caller from a wrong password, while readiness went on
+ * answering 200. Measured, not reasoned about: the environment was taken apart to see what the
+ * probe would say.
  */
 @Controller('auth/health')
 export class HealthController {
@@ -34,6 +40,14 @@ export class HealthController {
   @Get('ready')
   public async ready(): Promise<Record<string, unknown>> {
     await this.prisma.$queryRaw`select 1`;
+    if (!(await this.security.cacheReachable())) {
+      // 503, not a thrown 500. This is "not ready yet", a state an orchestrator is expected to poll
+      // through, not a defect in the request.
+      throw new ServiceUnavailableException({
+        status: 'unavailable',
+        reason: 'cache-unreachable',
+      });
+    }
     return {
       status: 'ok',
       version: this.environment.APP_VERSION,
