@@ -18,6 +18,24 @@ the other inside a container means the password passes through a shell — where
 lists and history. Munaxa Work has no `*_FILE` convention, so its cache URL is `WORK_REDIS_URL` in
 the operator's environment rather than a file here.
 
+## File ownership matters as much as file mode
+
+Compose (outside swarm) bind-mounts each secret with the **host's** ownership and mode, and silently
+ignores the `uid`/`gid`/`mode` fields that swarm honours. Identity's container runs as a non-root
+user, so a secret left `root:root 600` — the mode you would reach for first, and the right one —
+produces `EACCES` on `/run/secrets/...` and a container that restart-loops before it logs anything
+useful about why.
+
+The four secrets Identity reads are therefore owned by its container user, still `600`:
+
+```sh
+chown 100:101 deploy/secrets/identity_*        # uid/gid of the `identity` user in the image
+chmod 600 deploy/secrets/identity_*
+```
+
+`redis_password` stays `root:root`, because the redis image reads it as root before dropping
+privileges. If either image ever changes the user it runs as, these numbers change with it.
+
 The **public** half of the signing key is not a secret and does not live here: it goes into
 `PLATFORM_AUTH_PUBLIC_KEYS` in the environment, because Munaxa Work needs to verify with it and
 Platform publishes no JWKS endpoint for Work to fetch it from.
