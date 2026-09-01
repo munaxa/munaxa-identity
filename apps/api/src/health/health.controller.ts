@@ -1,6 +1,7 @@
 import { Controller, Get, Inject, ServiceUnavailableException } from '@nestjs/common';
 
 import { ENVIRONMENT, SECURITY_STACK } from '../tokens.js';
+import { probeReadiness } from './readiness.js';
 import { PrismaService } from '../persistence/prisma.service.js';
 import type { SecurityStack } from '../platform/security.js';
 import type { IdentityEnvironment } from '@identity/config';
@@ -39,13 +40,15 @@ export class HealthController {
 
   @Get('ready')
   public async ready(): Promise<Record<string, unknown>> {
-    await this.prisma.$queryRaw`select 1`;
-    if (!(await this.security.cacheReachable())) {
+    const probe = await probeReadiness(this.prisma, this.security);
+    if (!probe.ok) {
       // 503, not a thrown 500. This is "not ready yet", a state an orchestrator is expected to poll
-      // through, not a defect in the request.
+      // through, not a defect in the request. The reason names a dependency, never a credential,
+      // and the missing-table list is a schema fact rather than anything about a person.
       throw new ServiceUnavailableException({
         status: 'unavailable',
-        reason: 'cache-unreachable',
+        reason: probe.failed,
+        ...(probe.missing === undefined ? {} : { missing: probe.missing }),
       });
     }
     return {

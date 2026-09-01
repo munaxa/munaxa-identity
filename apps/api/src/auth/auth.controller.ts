@@ -1,8 +1,10 @@
-import { Body, Controller, Get, HttpCode, Post, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Inject, Post, Query, Req, Res } from '@nestjs/common';
+import type { Logger } from 'pino';
 import { toCorrelationId } from '@munaxa/types';
 import type { Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 
+import { LOGGER } from '../tokens.js';
 import { signInPage } from '../ui/sign-in.page.js';
 import { AuthService, type LoginFailure } from './auth.service.js';
 import { REFRESH_COOKIE, SESSION_COOKIE, clearSessionCookies, issueCookies } from './cookies.js';
@@ -20,7 +22,29 @@ import { REFRESH_COOKIE, SESSION_COOKIE, clearSessionCookies, issueCookies } fro
  */
 @Controller('auth')
 export class AuthController {
-  public constructor(private readonly auth: AuthService) {}
+  public constructor(
+    private readonly auth: AuthService,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
+
+  /**
+   * Record an infrastructure refusal where an operator will see it.
+   *
+   * The caller is told only `AUTH_UNAVAILABLE`; which dependency failed goes here, in a structured
+   * field, alongside the correlation id that ties it to the request. No identifier and no password
+   * — the whole point of a 503 is that the credential was never examined.
+   */
+  private noteUnavailable(request: Request, failure: LoginFailure): void {
+    if (failure.kind !== 'dependency-unavailable') return;
+    this.logger.error(
+      {
+        event: 'auth.dependency_unavailable',
+        dependency: failure.dependency,
+        correlationId: correlation(request),
+      },
+      'authentication dependency unavailable',
+    );
+  }
 
   /**
    * The sign-in page.
@@ -69,6 +93,7 @@ export class AuthController {
     const form = wantsHtml(request, body);
 
     if (!result.ok) {
+      this.noteUnavailable(request, result.failure);
       if (form !== undefined) {
         // A form post gets a page, not JSON. The reason is carried as a coarse code — the four the
         // page can render — never as a message, and never distinguishing a wrong password from an
@@ -114,6 +139,7 @@ export class AuthController {
     });
 
     if (!result.ok) {
+      this.noteUnavailable(request, result.failure);
       // A failed refresh clears the cookies. Leaving them would send the browser back with the
       // same dead credential on every navigation.
       clearSessionCookies(response);
@@ -165,6 +191,12 @@ const refuse = (response: Response, failure: LoginFailure): void => {
     case 'password-change-required':
       response.status(401).json({ code: 'AUTH_PASSWORD_POLICY' });
       return;
+    case 'dependency-unavailable':
+      // 503 and a Retry-After, because this is not the caller's fault and a client that retries in
+      // a moment is doing the right thing. The body names no dependency: which piece of our
+      // machinery is unwell is an operational detail, and the log line carries it instead.
+      response.status(503).setHeader('retry-after', '15').json({ code: 'AUTH_UNAVAILABLE' });
+      return;
     default:
       // `unknown-organisation` lands here too. Telling a stranger which organisations exist is a
       // disclosure, and telling them one exists but the password was wrong is two.
@@ -199,6 +231,8 @@ const reasonCode = (failure: LoginFailure): string => {
       return 'mfa';
     case 'password-change-required':
       return 'password-policy';
+    case 'dependency-unavailable':
+      return 'unavailable';
     default:
       return 'invalid';
   }
@@ -206,8 +240,12 @@ const reasonCode = (failure: LoginFailure): string => {
 
 const knownError = (
   value: string | undefined,
-): 'invalid' | 'locked' | 'mfa' | 'password-policy' | undefined =>
-  value === 'invalid' || value === 'locked' || value === 'mfa' || value === 'password-policy'
+): 'invalid' | 'locked' | 'mfa' | 'password-policy' | 'unavailable' | undefined =>
+  value === 'invalid' ||
+  value === 'locked' ||
+  value === 'mfa' ||
+  value === 'password-policy' ||
+  value === 'unavailable'
     ? value
     : undefined;
 

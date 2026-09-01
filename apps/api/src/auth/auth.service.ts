@@ -5,6 +5,7 @@ import type { CorrelationId, SessionId, TenantId, UserId } from '@munaxa/types';
 import type { IdentityEnvironment } from '@identity/config';
 
 import { ENVIRONMENT, SECURITY_STACK } from '../tokens.js';
+import { PrismaService } from '../persistence/prisma.service.js';
 import type { SecurityStack } from '../platform/security.js';
 
 /**
@@ -18,8 +19,32 @@ import type { SecurityStack } from '../platform/security.js';
  * freeze somebody's permissions for the thirty-day life of a refresh lineage.
  */
 
+/**
+ * The Platform error codes that mean "this sign-in attempt was refused", as opposed to "the sign-in
+ * machinery broke". Anything not in this set is treated as infrastructure; see `failureOf`.
+ */
+const AUTHENTICATION_OUTCOMES: ReadonlySet<string> = new Set([
+  'AUTH_INVALID_CREDENTIALS',
+  'AUTH_ACCOUNT_DISABLED',
+  'AUTH_MFA_INVALID',
+  'AUTH_MFA_REQUIRED',
+  'AUTH_PASSWORD_BREACHED',
+  'AUTH_PASSWORD_POLICY',
+  'AUTH_PASSWORD_REUSED',
+]);
+
 export type LoginFailure =
   | { readonly kind: 'invalid-credentials' }
+  /**
+   * The security infrastructure is unavailable — not the caller's credentials.
+   *
+   * Kept distinct from `invalid-credentials` because collapsing them tells an operator the wrong
+   * thing at the worst moment: with Redis stopped every sign-in answered 401, indistinguishable
+   * from a room full of people mistyping their passwords. It discloses nothing new — a stranger
+   * learns the service is unwell, which the readiness probe already says out loud, and learns
+   * nothing about whether any account exists.
+   */
+  | { readonly kind: 'dependency-unavailable'; readonly dependency: 'cache' | 'database' }
   | { readonly kind: 'mfa-required' }
   | { readonly kind: 'password-change-required' }
   | { readonly kind: 'rate-limited'; readonly retryAfterSeconds: number }
@@ -55,6 +80,7 @@ export class AuthService {
   public constructor(
     @Inject(SECURITY_STACK) private readonly security: SecurityStack,
     @Inject(ENVIRONMENT) private readonly environment: IdentityEnvironment,
+    private readonly prisma: PrismaService,
   ) {}
 
   public get sessionCookieMaxAge(): number {
@@ -94,7 +120,7 @@ export class AuthService {
         ...(request.userAgent === undefined ? {} : { userAgent: request.userAgent }),
       });
     } catch (error) {
-      return { ok: false, failure: failureOf(error) };
+      return { ok: false, failure: await this.failureOf(error) };
     }
 
     if (outcome.status === 'mfa-required') {
@@ -256,6 +282,55 @@ export class AuthService {
 
     return { ok: true, access: access.token, refresh, claims: access.claims };
   }
+
+  /**
+   * Decide what a thrown sign-in error actually was.
+   *
+   * Platform's authentication errors are a closed vocabulary — `AUTH_INVALID_CREDENTIALS`,
+   * `AUTH_ACCOUNT_DISABLED`, `AUTH_ACCOUNT_LOCKED`, the MFA and password-policy codes. Anything
+   * outside it is not an authentication outcome at all; it is the machinery underneath having
+   * failed. So rather than pattern-matching connection errors by message — which is guesswork that
+   * rots the first time a driver rewords something — an unrecognised error is answered by *asking
+   * the dependencies whether they are alive*. That is deterministic, and it costs one round trip
+   * on a path that has already failed.
+   *
+   * It never fails open. When every dependency answers and the error is still unrecognised, the
+   * caller gets the same generic refusal as a wrong password: an unexplained failure inside the
+   * security stack is a refusal, not a pass.
+   */
+  private async failureOf(error: unknown): Promise<LoginFailure> {
+    if (isPlatformError(error) && error.code === 'AUTH_ACCOUNT_LOCKED') {
+      // The one refusal that is not generic, and has to be: a caller being throttled needs to know
+      // to stop, and that they are being throttled reveals nothing about whether the account exists
+      // — lockout is keyed by a digest of the identifier precisely so a guess at an address that
+      // does not exist is throttled too.
+      const retry = (error.details as { retryAfterSeconds?: number } | undefined)
+        ?.retryAfterSeconds;
+      return { kind: 'rate-limited', retryAfterSeconds: retry ?? 900 };
+    }
+
+    if (isPlatformError(error) && AUTHENTICATION_OUTCOMES.has(error.code)) {
+      return { kind: 'invalid-credentials' };
+    }
+
+    if (!(await this.security.cacheReachable())) {
+      return { kind: 'dependency-unavailable', dependency: 'cache' };
+    }
+    if (!(await this.databaseReachable())) {
+      return { kind: 'dependency-unavailable', dependency: 'database' };
+    }
+
+    return { kind: 'invalid-credentials' };
+  }
+
+  private async databaseReachable(): Promise<boolean> {
+    try {
+      await this.prisma.$queryRaw`select 1`;
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 /**
@@ -266,14 +341,3 @@ export class AuthService {
  * real. Rate limiting is the exception and has to be — a caller who is being throttled needs to
  * know to stop, and the fact that they are being throttled reveals nothing about the account.
  */
-const failureOf = (error: unknown): LoginFailure => {
-  if (isPlatformError(error) && error.code === 'AUTH_ACCOUNT_LOCKED') {
-    // The one refusal that is not generic, and has to be: a caller being throttled needs to know
-    // to stop, and that they are being throttled reveals nothing about whether the account exists
-    // — lockout is keyed by a digest of the identifier precisely so a guess at an address that
-    // does not exist is throttled too.
-    const retry = (error.details as { retryAfterSeconds?: number } | undefined)?.retryAfterSeconds;
-    return { kind: 'rate-limited', retryAfterSeconds: retry ?? 900 };
-  }
-  return { kind: 'invalid-credentials' };
-};

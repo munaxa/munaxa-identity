@@ -20,7 +20,7 @@ export interface SignInPageOptions {
   readonly language: 'en' | 'ar';
   readonly returnTo: string;
   /** Present only after a failed attempt. Every credential failure produces the same one. */
-  readonly error?: 'invalid' | 'locked' | 'mfa' | 'password-policy' | undefined;
+  readonly error?: 'invalid' | 'locked' | 'mfa' | 'password-policy' | 'unavailable' | undefined;
   readonly organisationRequired: boolean;
 }
 
@@ -37,6 +37,9 @@ const COPY = {
     locked: 'Too many attempts. Wait a few minutes before trying again.',
     mfa: 'This account needs a second factor, which this deployment cannot yet ask for.',
     policy: 'This password must be changed before the account can be used.',
+    // Deliberately says nothing about which part is unwell, and deliberately does not blame the
+    // person's details — this is the one message on the page that is not about their credentials.
+    unavailable: 'Sign-in is temporarily unavailable. Please try again in a moment.',
   },
   ar: {
     dir: 'rtl',
@@ -50,6 +53,7 @@ const COPY = {
     locked: 'محاولات كثيرة. انتظر بضع دقائق قبل المحاولة مجددًا.',
     mfa: 'يحتاج هذا الحساب إلى عامل ثانٍ لا يستطيع هذا النشر طلبه بعد.',
     policy: 'يجب تغيير كلمة المرور قبل استخدام هذا الحساب.',
+    unavailable: 'تسجيل الدخول غير متاح مؤقتًا. يرجى المحاولة بعد قليل.',
   },
 } as const;
 
@@ -77,6 +81,8 @@ const messageFor = (error: SignInPageOptions['error'], copy: Copy): string | und
       return copy.mfa;
     case 'password-policy':
       return copy.policy;
+    case 'unavailable':
+      return copy.unavailable;
     default:
       return undefined;
   }
