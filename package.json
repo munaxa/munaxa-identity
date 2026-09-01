@@ -1,0 +1,47 @@
+{
+  "name": "munaxa-identity",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Munaxa Identity — the ecosystem's authentication and authorization authority. An independent product repository: accounts, credentials, sessions, refresh lineages, roles and the authentication service. Consumes the shared security platform from @munaxa/*.",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml}\"",
+    "prisma:generate": "prisma generate",
+    "prisma:deploy": "prisma migrate deploy",
+    "db:bootstrap-account": "pnpm --filter @identity/api db:bootstrap-account",
+    "db:seed-work-roles": "pnpm --filter @identity/api db:seed-work-roles",
+    "keys:generate": "pnpm --filter @identity/api keys:generate",
+    "check:catalogue-drift": "pnpm --filter @identity/api check:catalogue-drift",
+    "prisma:validate": "prisma validate"
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "prisma": "^6.2.0",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "prisma"
+    ]
+  }
+}

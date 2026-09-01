@@ -1,0 +1,13 @@
+# Munaxa Identity — an independent product workspace.
+#
+# Everything here is Identity's own: its API, its authentication UI, its configuration
+# contract, its Prisma schema and its test harness. The shared security platform is NOT a
+# workspace member — it is resolved from the registry as @munaxa/*, exactly as in every
+# other product repository.
+#
+# Nothing here may depend on another product. Work's permission vocabulary arrives as a
+# generated JSON artifact (docs/architecture/work-permission-catalogue.md), never as a
+# package: PLATFORM_ENGINEERING_STANDARDS §4 rule 3 is absolute.
+packages:
+  - 'apps/*'
+  - 'packages/*'

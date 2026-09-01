@@ -1,0 +1,50 @@
+# The staging front door.
+#
+# One public origin, three services behind it. This is not a convenience: Platform's session cookie
+# carries the `__Host-` prefix, which the *browser* enforces as secure, path `/`, and no `Domain`.
+# A host-only cookie set by an authentication host on a different origin is never sent to the
+# portal, and there is no cross-origin handoff in Platform to work around that — no `/authorize`,
+# no code exchange, no `redirect_uri` registry. So the origin is shared and the services are not.
+#
+# What this deliberately is not: an application. Identity and Munaxa Work stay separate products,
+# separate repositories, separate databases and separate deployments. A shared browser origin is a
+# routing fact, not an architectural merge — and putting them in one process to satisfy a cookie
+# rule would be the tail wagging the dog.
+#
+# Caddy is used because it obtains and renews TLS itself. Any reverse proxy does this job; what
+# matters is the path split and that it terminates TLS, because `Secure` cookies require it.
+
+{$PUBLIC_HOST} {
+	encode zstd gzip
+
+	# Identity owns authentication. The path prefix is part of the issuer URL and of the refresh
+	# cookie's path, so it is not something a deployment may vary independently.
+	handle /api/auth/* {
+		reverse_proxy identity:4001
+	}
+
+	# Munaxa Work's API. It receives the access token as a bearer header, forwarded by the portal
+	# server-side; the browser never calls it directly.
+	handle /api/v1/* {
+		reverse_proxy work-api:3000
+	}
+
+	# The portal. Everything not claimed above.
+	handle {
+		reverse_proxy work-admin:3001
+	}
+
+	header {
+		# Belt and braces: each service sets its own security headers, and a header set here
+		# survives a response produced by the proxy itself rather than by a service.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

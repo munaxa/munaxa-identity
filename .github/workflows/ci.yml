@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Never a real value, and never a default that would let a test pass with a weak one. The key is
+  # generated per run, so nothing key-shaped exists in this file or in the repository.
+  TEST_DATABASE_URL: postgresql://identity_app:identity_app@localhost:5432/identity_test
+  TEST_DIRECT_DATABASE_URL: postgresql://identity:identity@localhost:5432/identity_test
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: identity
+          POSTGRES_PASSWORD: identity
+          POSTGRES_DB: identity_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          # The scope→registry mapping is committed in .npmrc; the credential is injected here.
+          registry-url: https://npm.pkg.github.com
+          scope: '@munaxa'
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+
+      - name: Format
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Generate the Prisma client
+        run: pnpm prisma:generate
+        env:
+          DATABASE_URL: ${{ env.TEST_DIRECT_DATABASE_URL }}
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      # The application role is what the service connects as, and the security properties this
+      # repository claims are properties of *that role* meeting a policy. Creating it here is not
+      # test setup — it is the difference between testing the deployment and testing a superuser.
+      - name: Provision the database roles
+        run: |
+          psql "$TEST_DIRECT_DATABASE_URL" -v ON_ERROR_STOP=1 -c "
+            create role identity_app login password 'identity_app'
+              nosuperuser nobypassrls nocreatedb nocreaterole noreplication;"
+        env:
+          PGPASSWORD: identity
+
+      - name: Migrate from zero
+        run: |
+          psql "$TEST_DIRECT_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f prisma/migrations/20260901120000_identity_baseline/migration.sql
+        env:
+          PGPASSWORD: identity
+
+      - name: Grant the application role what it uses, and nothing more
+        run: |
+          psql "$TEST_DIRECT_DATABASE_URL" -v ON_ERROR_STOP=1 -c "
+            grant usage on schema public to identity_app;
+            grant select on identity_tenant to identity_app;
+            grant select, insert, update, delete on identity_account, identity_session,
+              identity_refresh_token, identity_role, identity_role_assignment,
+              identity_reset_token to identity_app;
+            grant select, insert on identity_audit_event to identity_app;"
+        env:
+          PGPASSWORD: identity
+
+      - name: Migration validation
+        run: pnpm prisma:validate
+        env:
+          DATABASE_URL: ${{ env.TEST_DIRECT_DATABASE_URL }}
+
+      - name: Unit tests
+        run: pnpm test
+
+      # Row-level security, Platform's port conformance and the cookie-size ceiling. These need a
+      # real PostgreSQL and the real roles; none of them can be observed from a schema file.
+      - name: Integration, security and conformance tests
+        run: pnpm test:integration
+
+      - name: Work permission catalogue drift
+        run: pnpm check:catalogue-drift
+
+      # A blunt search, deliberately: the source composes its PEM markers and the tests generate
+      # their keys, so there is nothing to allow-list — and an allow-list is how the one real key
+      # eventually gets past a check like this.
+      - name: No key material in the repository
+        run: |
+          if git grep -nE -- '-----BEGIN [A-Z ]*PRIVATE KEY-----'; then
+            echo "A private key is committed. Remove it, and rotate it: it is public now." >&2
+            exit 1
+          fi
+
+      - name: Audit dependencies
+        run: pnpm audit --audit-level high
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}

@@ -1,0 +1,5 @@
+{
+  "//": "Root tsconfig for editor resolution. Apps and packages carry their own.",
+  "files": [],
+  "references": [{ "path": "./packages/config" }, { "path": "./packages/testing" }]
+}

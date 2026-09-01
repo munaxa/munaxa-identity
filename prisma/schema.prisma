@@ -1,0 +1,260 @@
+// Munaxa Identity — the authentication authority's own database.
+//
+// Every table here backs a Platform port. Nothing is modelled that a port does not need, and
+// nothing a port needs is left out: `CredentialRecord`, `SessionRecord`, `RefreshTokenRecord`,
+// `RoleDefinition`, `RoleAssignment` and `ResetTokenRecord` are the specification, and the
+// adapters in apps/api/src/persistence are the only code that reads these tables.
+//
+// Row-level security is added by migration SQL rather than by Prisma, which has no concept of it.
+// See 20260901120000_identity_baseline/migration.sql for the policies, the grants and the two
+// database roles.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/identity-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountStatus {
+  active
+  disabled
+  locked
+  pending_verification
+
+  @@map("account_status")
+}
+
+enum IdentitySource {
+  local
+  federated
+
+  @@map("identity_source")
+}
+
+/// An organisation: one customer of Munaxa, and the scope of every role assignment.
+///
+/// Deliberately NOT the same identifier as a Munaxa Work tenant. Work resolves its own tenancy
+/// from `tenant_membership` and ignores the `tid` claim entirely (Work ADR-0032/0033); the
+/// relationship between the two is an operational mapping recorded in the runbook, never an
+/// equality any code may assume.
+///
+/// This is the one table without row-level security, because it is what a tenant context is
+/// resolved *from* — a login knows an organisation slug before it knows an organisation id. It
+/// holds no personal data and no credential, only the directory needed to establish a context.
+model IdentityTenant {
+  /// Not constrained to a UUID: `TenantId` is an opaque platform identifier — its own reserved
+  /// `root` is not one — and a column that rejects what the platform produces is a column that
+  /// fails on the platform's own vocabulary. Identity mints UUIDs for the organisations it creates.
+  id        String   @id
+  key       String   @unique
+  name      String
+  status    String   @default("active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  accounts    IdentityAccount[]
+  roles       IdentityRole[]
+
+  @@map("identity_tenant")
+}
+
+/// An authenticable Munaxa identity — the projection Platform's `CredentialRecord` describes.
+///
+/// `identity_source`, `external_id` and `identity_provider_id` are carried from the first
+/// migration even though federation is not wired yet, because their absence is not neutral:
+/// `password_hash` is nullable, and without a recorded origin an account with no password could
+/// equally be an invitation not yet accepted or somebody who signs in through an external
+/// provider, and nothing could tell them apart. Munaxa Docs discovered this the expensive way.
+model IdentityAccount {
+  /// The `sub` claim, and an opaque platform identifier rather than a uuid. Identity mints UUIDs;
+  /// the column does not require one, because `UserId` is a branded string and a column that
+  /// rejects what the platform can produce fails on the platform's own vocabulary.
+  id                  String         @id
+  tenantId            String         @map("tenant_id")
+  /// As the person typed it. Shown back to nobody; kept for correspondence.
+  identifier          String
+  /// Lower-cased and trimmed. The only column ever matched against.
+  identifierNormalized String        @map("identifier_normalized")
+  /// Null for an account that authenticates another way entirely. Absence never permits a sign-in.
+  passwordHash        String?        @map("password_hash")
+  /// Which hasher produced `password_hash`, so a legacy algorithm can be upgraded on next login.
+  passwordAlgorithm   String?        @map("password_algorithm")
+  passwordUpdatedAt   DateTime?      @map("password_updated_at") @db.Timestamptz(6)
+  status              AccountStatus  @default(pending_verification)
+  /// Bumped to invalidate every token issued before the change. Copied into the `ver` claim.
+  tokenVersion        Int            @default(1) @map("token_version")
+  mfaEnrolled         Boolean        @default(false) @map("mfa_enrolled")
+  mustChangePassword  Boolean        @default(false) @map("must_change_password")
+  identitySource      IdentitySource @default(local) @map("identity_source")
+  externalId          String?        @map("external_id")
+  identityProviderId  String?        @map("identity_provider_id") @db.Uuid
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy           String?        @map("created_by")
+  updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy           String?        @map("updated_by")
+  disabledAt          DateTime?      @map("disabled_at") @db.Timestamptz(6)
+  version             Int            @default(1)
+
+  tenant      IdentityTenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  assignments IdentityRoleAssignment[]
+
+  @@unique([tenantId, identifierNormalized], map: "uq_identity_account_identifier")
+  /// NULLs are distinct in a PostgreSQL unique index, so this binds exactly the federated rows
+  /// and ignores every password account — which is what it is for.
+  @@unique([tenantId, identityProviderId, externalId], map: "uq_identity_account_external")
+  @@index([tenantId, status], map: "ix_identity_account_status")
+  @@map("identity_account")
+}
+
+/// A server-side session.
+///
+/// No foreign key to the account, deliberately. `SessionStorePort` treats the user id as an opaque
+/// identifier and never promises that an account row exists — Platform's own conformance suite
+/// stores sessions for users it never created, and an adapter that refuses them does not satisfy
+/// the port. The referential guarantee this gives up is small; what it buys is a store whose
+/// contract is the port's rather than a stricter one nobody specified.
+///
+/// Two deadlines, not one: idle moves forward on activity, absolute never
+/// does, so a stolen session kept warm by an attacker still dies.
+model IdentitySession {
+  id                String    @id
+  tenantId          String    @map("tenant_id")
+  accountId         String    @map("account_id")
+  createdAt         DateTime  @map("created_at") @db.Timestamptz(6)
+  lastSeenAt        DateTime  @map("last_seen_at") @db.Timestamptz(6)
+  idleExpiresAt     DateTime  @map("idle_expires_at") @db.Timestamptz(6)
+  absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(6)
+  deviceId          String?   @map("device_id")
+  ipAddress         String?   @map("ip_address")
+  userAgent         String?   @map("user_agent")
+  authMethods       String[]  @map("auth_methods")
+  mfaSatisfied      Boolean   @map("mfa_satisfied")
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revocationReason  String?   @map("revocation_reason")
+  tokenVersion      Int       @map("token_version")
+  attributes        Json?
+
+
+  @@index([tenantId, accountId, revokedAt, idleExpiresAt, absoluteExpiresAt], map: "ix_identity_session_live")
+  @@map("identity_session")
+}
+
+/// One refresh token in a lineage. The token itself is never stored — only a peppered hash — so a
+/// database dump yields nothing an attacker can present.
+model IdentityRefreshToken {
+  id               String    @id
+  tenantId         String    @map("tenant_id")
+  accountId        String    @map("account_id")
+  familyId         String    @map("family_id")
+  tokenHash        String    @map("token_hash")
+  issuedAt         DateTime  @map("issued_at") @db.Timestamptz(6)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  sessionId        String?   @map("session_id")
+  deviceId         String?   @map("device_id")
+  /// Set when this token was exchanged. Presenting it again is a replay, and revokes the family.
+  rotatedAt        DateTime? @map("rotated_at") @db.Timestamptz(6)
+  replacedBy       String?   @map("replaced_by")
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revocationReason String?   @map("revocation_reason")
+  tokenVersion     Int       @map("token_version")
+
+
+  @@unique([tenantId, tokenHash], map: "uq_identity_refresh_token_hash")
+  @@index([tenantId, familyId], map: "ix_identity_refresh_token_family")
+  @@index([tenantId, accountId], map: "ix_identity_refresh_token_account")
+  @@map("identity_refresh_token")
+}
+
+/// A named bundle of permissions, scoped to one organisation.
+model IdentityRole {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id")
+  key         String
+  name        String
+  description String?
+  /// Platform grammar: `resource:action`. Munaxa Work's grants are `work:` + its own names.
+  permissions String[]
+  inherits    String[]
+  /// System roles cannot be deleted by an administrator; the product refers to them by key.
+  system      Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant      IdentityTenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  assignments IdentityRoleAssignment[]
+
+  @@unique([tenantId, key], map: "uq_identity_role_key")
+  @@map("identity_role")
+}
+
+/// A role held by an account.
+///
+/// `scope` is part of the primary key because it is part of the assignment's identity: the same
+/// role granted twice with different scopes is two grants. For Munaxa Work it must always be
+/// null — a scoped assignment suffixes every permission, producing a string Work drops as
+/// undeclared, which reads to everyone involved as a permission that simply does not work.
+model IdentityRoleAssignment {
+  tenantId   String    @map("tenant_id")
+  accountId  String    @map("account_id")
+  roleId     String    @map("role_id") @db.Uuid
+  scope      String    @default("")
+  assignedAt DateTime  @map("assigned_at") @db.Timestamptz(6)
+  assignedBy String?   @map("assigned_by")
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(6)
+
+  account IdentityAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  role    IdentityRole    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, accountId, roleId, scope])
+  @@index([tenantId, accountId], map: "ix_identity_role_assignment_account")
+  @@map("identity_role_assignment")
+}
+
+/// A password-reset ticket: single use, hashed at rest, short-lived, and bound to the password it
+/// was issued against — so it stops working the moment the password changes by any other route.
+model IdentityResetToken {
+  id                      String    @id
+  tenantId                String    @map("tenant_id")
+  accountId               String    @map("account_id")
+  tokenHash               String    @map("token_hash")
+  issuedAt                DateTime  @map("issued_at") @db.Timestamptz(6)
+  expiresAt               DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt              DateTime? @map("consumed_at") @db.Timestamptz(6)
+  revokedAt               DateTime? @map("revoked_at") @db.Timestamptz(6)
+  passwordHashFingerprint String    @map("password_hash_fingerprint")
+  requestIp               String?   @map("request_ip")
+
+
+  @@unique([tenantId, tokenHash], map: "uq_identity_reset_token_hash")
+  @@index([tenantId, accountId], map: "ix_identity_reset_token_account")
+  @@map("identity_reset_token")
+}
+
+/// The hash-chained security trail. Append-only by grant, not by policy: the runtime role holds
+/// INSERT and SELECT and nothing else, so "append-only" is a privilege the application cannot
+/// talk its way out of rather than a rule it is trusted to follow.
+model IdentityAuditEvent {
+  tenantId      String   @map("tenant_id")
+  sequence      BigInt
+  id            String
+  /// The whole `SecurityEvent`, exactly as the platform sealed it. Denormalising it would risk
+  /// the stored copy and the hashed copy disagreeing, and the hash is the only thing here that
+  /// makes the trail evidence rather than a log.
+  event         Json
+  /// Copied out of `event` for the two indexes below, and for nothing else.
+  eventName     String   @map("event_name")
+  occurredAt    DateTime @map("occurred_at") @db.Timestamptz(6)
+  recordedAt    DateTime @map("recorded_at") @db.Timestamptz(6)
+  /// Chain link: the digest of the previous record for this organisation.
+  previousHash  String?  @map("previous_hash")
+  hash          String
+  formatVersion Int      @default(1) @map("format_version")
+
+  @@id([tenantId, sequence])
+  @@index([tenantId, occurredAt], map: "ix_identity_audit_occurred")
+  @@index([tenantId, eventName], map: "ix_identity_audit_event")
+  @@map("identity_audit_event")
+}

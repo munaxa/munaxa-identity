@@ -1,0 +1,29 @@
+{
+  "name": "@identity/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "echo 'lint: covered by typecheck and format:check'"
+  },
+  "dependencies": {
+    "@munaxa/config": "^2.4.1",
+    "@munaxa/types": "^2.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.0"
+  }
+}

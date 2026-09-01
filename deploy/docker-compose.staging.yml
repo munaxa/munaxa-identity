@@ -1,0 +1,95 @@
+# Munaxa staging — the three services behind one public origin.
+#
+# Not a development compose file. Nothing here publishes a database port to the host, nothing
+# carries a default password, and every secret is a Docker secret rather than an environment
+# literal: an env var is visible to `docker inspect`, to every process in the container and to any
+# crash reporter that dumps the environment, which for a signing key is the whole compromise.
+#
+# The front door is what makes the `__Host-` session cookie work at all. It is one origin the
+# browser sees; the three services behind it stay separate products with separate databases.
+
+name: munaxa-staging
+
+secrets:
+  identity_signing_private_key: { file: ./secrets/identity_signing_private_key.pem }
+  identity_signing_secret: { file: ./secrets/identity_signing_secret }
+  identity_database_url: { file: ./secrets/identity_database_url }
+  work_database_url: { file: ./secrets/work_database_url }
+
+services:
+  front-door:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ['443:443', '80:80']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [identity, work-api, work-admin]
+
+  identity:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+      secrets: [npm_token]
+    restart: unless-stopped
+    # No `ports`: reachable only through the front door and only on the internal network.
+    expose: ['4001']
+    secrets: [identity_signing_private_key, identity_signing_secret, identity_database_url]
+    environment:
+      NODE_ENV: production
+      PORT: '4001'
+      # Read from the mounted secret files at start, so no secret is ever an environment literal.
+      IDENTITY_SIGNING_PRIVATE_KEY_FILE: /run/secrets/identity_signing_private_key
+      IDENTITY_SIGNING_SECRET_FILE: /run/secrets/identity_signing_secret
+      DATABASE_URL_FILE: /run/secrets/identity_database_url
+      IDENTITY_BASE_URL: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN}/api/auth
+      IDENTITY_AUTH_AUDIENCE: munaxa-work
+      IDENTITY_SIGNING_ALGORITHM: ES256
+      IDENTITY_SIGNING_KID: ${IDENTITY_SIGNING_KID:?set IDENTITY_SIGNING_KID}
+      IDENTITY_DEFAULT_ORGANISATION: ${IDENTITY_DEFAULT_ORGANISATION:-}
+      CSRF_TRUSTED_ORIGINS: ${PUBLIC_ORIGIN}
+      REDIS_URL: redis://cache:6379
+      LOG_PRETTY: 'false'
+    depends_on: { cache: { condition: service_healthy } }
+
+  cache:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Lockout counters and the permission cache. Not published; not persisted — everything on it is
+    # reconstructible, and a persisted cache is a file of session-shaped data nobody is watching.
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    expose: ['6379']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  work-api:
+    image: ${WORK_API_IMAGE:?set WORK_API_IMAGE}
+    restart: unless-stopped
+    expose: ['3000']
+    secrets: [work_database_url]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL_FILE: /run/secrets/work_database_url
+      # The public half of Identity's key. Not a secret, and deliberately configured rather than
+      # fetched: Platform publishes no JWKS endpoint, so this is the only mechanism there is.
+      PLATFORM_AUTH_ISSUER: ${PUBLIC_ORIGIN}/api/auth
+      PLATFORM_AUTH_AUDIENCE: munaxa-work
+      PLATFORM_AUTH_ALGORITHM: ES256
+      PLATFORM_AUTH_PUBLIC_KEYS: ${PLATFORM_AUTH_PUBLIC_KEYS:?set PLATFORM_AUTH_PUBLIC_KEYS}
+
+  work-admin:
+    image: ${WORK_ADMIN_IMAGE:?set WORK_ADMIN_IMAGE}
+    restart: unless-stopped
+    expose: ['3001']
+    environment:
+      NODE_ENV: production
+      WORK_API_URL: http://work-api:3000
+      PLATFORM_SIGN_IN_URL: ${PUBLIC_ORIGIN}/api/auth/login
+
+volumes:
+  caddy-data:
+  caddy-config:

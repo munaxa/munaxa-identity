@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.next/
+.turbo/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+# Signing material never enters the repository, under any name.
+*.pem
+*.key
+
+# Deployment secrets are mounted, never committed.
+deploy/secrets/*
+!deploy/secrets/README.md
