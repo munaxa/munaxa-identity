@@ -6,3 +6,4 @@
  */
 export const ENVIRONMENT = Symbol('identity.environment');
 export const SECURITY_STACK = Symbol('identity.securityStack');
+export const LOGGER = Symbol('identity.logger');

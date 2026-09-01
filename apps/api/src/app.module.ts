@@ -11,8 +11,10 @@ import { AuthService } from './auth/auth.service.js';
 import { HealthController } from './health/health.controller.js';
 import { PrismaService } from './persistence/prisma.service.js';
 import { buildSecurityStack, type SecurityStack } from './platform/security.js';
+import { createLogger } from './observability/logger.js';
+import { RequestLogMiddleware } from './observability/request-log.middleware.js';
 import { EdgeMiddleware } from './security/edge.middleware.js';
-import { ENVIRONMENT, SECURITY_STACK } from './tokens.js';
+import { ENVIRONMENT, LOGGER, SECURITY_STACK } from './tokens.js';
 
 /**
  * The application.
@@ -27,7 +29,13 @@ import { ENVIRONMENT, SECURITY_STACK } from './tokens.js';
     PrismaService,
     AuthService,
     EdgeMiddleware,
+    RequestLogMiddleware,
     { provide: ENVIRONMENT, useFactory: (): IdentityEnvironment => loadEnvironment() },
+    {
+      provide: LOGGER,
+      inject: [ENVIRONMENT],
+      useFactory: (environment: IdentityEnvironment) => createLogger(environment),
+    },
     {
       provide: SECURITY_STACK,
       inject: [ENVIRONMENT, PrismaService],
@@ -37,7 +45,7 @@ import { ENVIRONMENT, SECURITY_STACK } from './tokens.js';
       ): Promise<SecurityStack> => buildSecurityStack(environment, prisma),
     },
   ],
-  exports: [ENVIRONMENT, SECURITY_STACK, PrismaService],
+  exports: [ENVIRONMENT, LOGGER, SECURITY_STACK, PrismaService],
 })
 export class AppModule implements NestModule, OnApplicationShutdown {
   public constructor() {}
@@ -45,7 +53,9 @@ export class AppModule implements NestModule, OnApplicationShutdown {
   public configure(consumer: MiddlewareConsumer): void {
     // Every route, without exception. A route added later is protected by default rather than by
     // somebody remembering to list it.
-    consumer.apply(EdgeMiddleware).forRoutes('*');
+    // The edge first, so a request rejected there still carries the correlation id the log line
+    // reports; then the log, so every request produces exactly one summary whatever the outcome.
+    consumer.apply(EdgeMiddleware, RequestLogMiddleware).forRoutes('*');
   }
 
   public onApplicationShutdown(): void {

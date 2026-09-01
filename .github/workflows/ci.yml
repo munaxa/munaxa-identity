@@ -128,6 +128,23 @@ jobs:
             exit 1
           fi
 
+      # A filled-in secret is not a private key and would pass the check above. This catches the
+      # realistic accident, which is not someone writing a key into a .ts file — it is someone
+      # editing .env.staging.example instead of copying it, or pasting a value into the compose
+      # file to get past a service that would not start. So it looks where values live, and leaves
+      # source alone: a schema declaring `IDENTITY_SIGNING_SECRET` is the opposite of a leak.
+      - name: No secret values in environment or deployment files
+        run: |
+          if git grep -nE '^[[:space:]]*-?[[:space:]]*(IDENTITY_SIGNING_SECRET|IDENTITY_SIGNING_PRIVATE_KEY|WORK_PII_MATCH_SECRET|WORK_DATABASE_URL|PLATFORM_PACKAGES_TOKEN)[[:space:]]*[:=][[:space:]]*[^[:space:]$#]' \
+               -- '.env*' 'deploy/*'; then
+            echo "A secret has a value in an environment or deployment file. Placeholders only." >&2
+            exit 1
+          fi
+          if git grep -nE 'postgres(ql)?://[^[:space:]\"]*:[^[:space:]@\"]+@' -- 'deploy/*'; then
+            echo "A connection string with an embedded credential is committed under deploy/." >&2
+            exit 1
+          fi
+
       - name: Audit dependencies
         run: pnpm audit --audit-level high
         env:

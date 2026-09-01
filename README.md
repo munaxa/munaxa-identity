@@ -58,6 +58,7 @@ The last command prints the account's `sub`. That value is what Munaxa Work need
 - [**Decisions**](./docs/adr) — the choices that would otherwise be re-litigated.
 - [**Runbooks**](./docs/runbooks) — provisioning, key rotation, revocation, rollback.
 - [**Artifacts**](./artifacts) — Munaxa Work's permission catalogue, and why it is a file.
+- [**Secrets**](./docs/runbooks/secrets.md) — what is secret, what is only configuration, and why.
 
 ## Known limitations
 

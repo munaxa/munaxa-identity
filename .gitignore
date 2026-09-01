@@ -6,7 +6,11 @@ coverage/
 *.tsbuildinfo
 .env
 .env.*
+# The examples are the templates operators copy, so they are tracked. `.env.*` above would
+# otherwise swallow `.env.staging.example` — which it did, silently, until a test for the CI
+# secret check tried to stage the file and could not.
 !.env.example
+!.env.staging.example
 # Signing material never enters the repository, under any name.
 *.pem
 *.key
@@ -14,3 +18,6 @@ coverage/
 # Deployment secrets are mounted, never committed.
 deploy/secrets/*
 !deploy/secrets/README.md
+
+# Staging environment values, filled in from .env.staging.example.
+deploy/.env

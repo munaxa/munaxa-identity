@@ -1,9 +1,16 @@
-# Munaxa staging — the three services behind one public origin.
+# Munaxa staging — three services behind one public origin.
 #
-# Not a development compose file. Nothing here publishes a database port to the host, nothing
-# carries a default password, and every secret is a Docker secret rather than an environment
-# literal: an env var is visible to `docker inspect`, to every process in the container and to any
-# crash reporter that dumps the environment, which for a signing key is the whole compromise.
+# Not a development compose file. Nothing here publishes a database port, nothing carries a default
+# credential, and every Identity secret is a mounted file rather than an environment literal: an env
+# var is visible to `docker inspect`, to every process in the container and to any crash reporter
+# that dumps the environment, which for a signing key is the whole compromise.
+#
+# **Databases are not defined here.** Both are provisioned outside this file — a managed PostgreSQL
+# in staging, as Munaxa School does — for two reasons that matter more than convenience: migrations
+# must run as a *different role* from the one the services connect as, which is an ordering a
+# compose file cannot express; and a database whose lifecycle is tied to `docker compose down` is a
+# database somebody will eventually delete by tidying up. See docs/runbooks/staging-provisioning.md,
+# which must be completed before this file is used.
 #
 # The front door is what makes the `__Host-` session cookie work at all. It is one origin the
 # browser sees; the three services behind it stay separate products with separate databases.
@@ -11,21 +18,31 @@
 name: munaxa-staging
 
 secrets:
+  # Docker secrets are files. Identity reads each through its `*_FILE` convention, so no secret is
+  # ever an environment literal in this file or in the running container's environment.
   identity_signing_private_key: { file: ./secrets/identity_signing_private_key.pem }
   identity_signing_secret: { file: ./secrets/identity_signing_secret }
   identity_database_url: { file: ./secrets/identity_database_url }
-  work_database_url: { file: ./secrets/work_database_url }
 
 services:
   front-door:
     image: caddy:2-alpine
     restart: unless-stopped
     ports: ['443:443', '80:80']
+    environment:
+      # The site address Caddy serves and obtains a certificate for. A host, not a URL:
+      # `PUBLIC_ORIGIN` is `https://<host>` and this is `<host>`.
+      PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST, the public hostname this origin answers on}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on: [identity, work-api, work-admin]
+    # Health conditions, not bare `depends_on`. Started-but-not-ready is the state that produces a
+    # front door serving 502s to the first users through the door after every deploy.
+    depends_on:
+      identity: { condition: service_healthy }
+      work-api: { condition: service_healthy }
+      work-admin: { condition: service_started }
 
   identity:
     build:
@@ -33,31 +50,48 @@ services:
       dockerfile: apps/api/Dockerfile
       secrets: [npm_token]
     restart: unless-stopped
-    # No `ports`: reachable only through the front door and only on the internal network.
+    # No `ports`: reachable only through the front door, only on the internal network.
     expose: ['4001']
     secrets: [identity_signing_private_key, identity_signing_secret, identity_database_url]
     environment:
       NODE_ENV: production
       PORT: '4001'
-      # Read from the mounted secret files at start, so no secret is ever an environment literal.
       IDENTITY_SIGNING_PRIVATE_KEY_FILE: /run/secrets/identity_signing_private_key
       IDENTITY_SIGNING_SECRET_FILE: /run/secrets/identity_signing_secret
       DATABASE_URL_FILE: /run/secrets/identity_database_url
-      IDENTITY_BASE_URL: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN}/api/auth
+      # This exact string becomes the `iss` claim, and Munaxa Work compares it character for
+      # character. It is the public URL, never an internal address.
+      IDENTITY_BASE_URL: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN, e.g. https://$PUBLIC_HOST}/api/auth
       IDENTITY_AUTH_AUDIENCE: munaxa-work
       IDENTITY_SIGNING_ALGORITHM: ES256
-      IDENTITY_SIGNING_KID: ${IDENTITY_SIGNING_KID:?set IDENTITY_SIGNING_KID}
+      IDENTITY_SIGNING_KID: ${IDENTITY_SIGNING_KID:?set IDENTITY_SIGNING_KID, e.g. identity-staging-2026-09}
       IDENTITY_DEFAULT_ORGANISATION: ${IDENTITY_DEFAULT_ORGANISATION:-}
       CSRF_TRUSTED_ORIGINS: ${PUBLIC_ORIGIN}
       REDIS_URL: redis://cache:6379
       LOG_PRETTY: 'false'
-    depends_on: { cache: { condition: service_healthy } }
+      APP_VERSION: ${IDENTITY_VERSION:-0.1.0}
+      BUILD_SHA: ${IDENTITY_BUILD_SHA:-unknown}
+    depends_on:
+      cache: { condition: service_healthy }
+    # The image declares this too; it is repeated here because the compose health *conditions*
+    # above depend on it and a reader should not have to open the Dockerfile to see why.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4001/api/auth/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
 
   cache:
     image: redis:7-alpine
     restart: unless-stopped
-    # Lockout counters and the permission cache. Not published; not persisted — everything on it is
-    # reconstructible, and a persisted cache is a file of session-shaped data nobody is watching.
+    # Lockout counters, the permission cache and rate limits. Not published, and not persisted:
+    # everything on it is reconstructible, and a persisted cache is a file of session-shaped data
+    # nobody is watching.
     command: ['redis-server', '--save', '', '--appendonly', 'no']
     expose: ['6379']
     healthcheck:
@@ -70,16 +104,33 @@ services:
     image: ${WORK_API_IMAGE:?set WORK_API_IMAGE}
     restart: unless-stopped
     expose: ['3000']
-    secrets: [work_database_url]
     environment:
       NODE_ENV: production
-      DATABASE_URL_FILE: /run/secrets/work_database_url
-      # The public half of Identity's key. Not a secret, and deliberately configured rather than
-      # fetched: Platform publishes no JWKS endpoint, so this is the only mechanism there is.
+      # Munaxa Work's configuration contract is `DATABASE_URL`; it has no `*_FILE` convention, and
+      # adding one would be a change to another product for this file's convenience. On a platform
+      # with secret injection this is a secret-backed variable; under plain compose it comes from
+      # the operator's shell, never from a committed file.
+      DATABASE_URL: ${WORK_DATABASE_URL:?set WORK_DATABASE_URL from your secret store}
+      PII_MATCH_SECRET: ${WORK_PII_MATCH_SECRET:?set WORK_PII_MATCH_SECRET from your secret store}
+      REDIS_URL: redis://cache:6379
+      # The public half of Identity's signing key. Not a secret, and deliberately configured rather
+      # than fetched: Platform publishes no JWKS endpoint, so this is the only mechanism there is.
       PLATFORM_AUTH_ISSUER: ${PUBLIC_ORIGIN}/api/auth
       PLATFORM_AUTH_AUDIENCE: munaxa-work
       PLATFORM_AUTH_ALGORITHM: ES256
-      PLATFORM_AUTH_PUBLIC_KEYS: ${PLATFORM_AUTH_PUBLIC_KEYS:?set PLATFORM_AUTH_PUBLIC_KEYS}
+      PLATFORM_AUTH_PUBLIC_KEYS: ${PLATFORM_AUTH_PUBLIC_KEYS:?set PLATFORM_AUTH_PUBLIC_KEYS to Identity's public key}
+    depends_on:
+      cache: { condition: service_healthy }
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
 
   work-admin:
     image: ${WORK_ADMIN_IMAGE:?set WORK_ADMIN_IMAGE}
@@ -87,8 +138,11 @@ services:
     expose: ['3001']
     environment:
       NODE_ENV: production
+      # Server-to-server, inside the compose network. The browser never calls the API directly.
       WORK_API_URL: http://work-api:3000
       PLATFORM_SIGN_IN_URL: ${PUBLIC_ORIGIN}/api/auth/login
+    depends_on:
+      work-api: { condition: service_healthy }
 
 volumes:
   caddy-data:

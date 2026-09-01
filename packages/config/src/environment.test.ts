@@ -144,3 +144,64 @@ describe('rendering the configuration', () => {
     expect(rendered).toContain('identity-dev-2026-09');
   });
 });
+
+describe('secrets mounted as files', () => {
+  const files: Record<string, string> = {
+    '/run/secrets/key': `${EC_KEY}\n`,
+    '/run/secrets/db': 'postgresql://identity_app:mounted@db:5432/identity\n',
+  };
+  const read = (path: string): string => {
+    const contents = files[path];
+    if (contents === undefined) throw new Error(`no such file ${path}`);
+    return contents;
+  };
+
+  it('reads a value from the file its _FILE variable names', () => {
+    const env = loadEnvironment(
+      {
+        ...complete,
+        IDENTITY_SIGNING_PRIVATE_KEY: undefined,
+        IDENTITY_SIGNING_PRIVATE_KEY_FILE: '/run/secrets/key',
+        DATABASE_URL: undefined,
+        DATABASE_URL_FILE: '/run/secrets/db',
+      },
+      read,
+    );
+
+    expect(env.IDENTITY_SIGNING_PRIVATE_KEY.startsWith('-----BEGIN')).toBe(true);
+    expect(env.DATABASE_URL).toBe('postgresql://identity_app:mounted@db:5432/identity');
+  });
+
+  it('strips the trailing newline every editor and `echo` adds', () => {
+    const env = loadEnvironment(
+      { ...complete, DATABASE_URL: undefined, DATABASE_URL_FILE: '/run/secrets/db' },
+      read,
+    );
+
+    expect(env.DATABASE_URL.endsWith('\n')).toBe(false);
+  });
+
+  it('lets a directly set value win, so a deployment without mounts still runs', () => {
+    const env = loadEnvironment(
+      {
+        ...complete,
+        DATABASE_URL: 'postgresql://direct@localhost:5432/x',
+        DATABASE_URL_FILE: '/run/secrets/db',
+      },
+      read,
+    );
+
+    expect(env.DATABASE_URL).toBe('postgresql://direct@localhost:5432/x');
+  });
+
+  it('refuses to start when the named mount is absent', () => {
+    // The alternative is a service that runs without the secret it was configured to need, which
+    // for a signing key means every token it issues is signed by something nobody chose.
+    expect(() =>
+      loadEnvironment(
+        { ...complete, DATABASE_URL: undefined, DATABASE_URL_FILE: '/run/secrets/gone' },
+        read,
+      ),
+    ).toThrowError(/could not be read/);
+  });
+});

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import {
   PLATFORM_SCHEMA,
   boolean,
@@ -211,10 +213,57 @@ export const IDENTITY_SCHEMA = extendConfig(
 
 export type IdentityEnvironment = Resolved<typeof IDENTITY_SCHEMA.fields>;
 
+/**
+ * Read `NAME` from the file named by `NAME_FILE`, wherever one is set.
+ *
+ * This is the convention every secret manager that mounts secrets already speaks — Docker and
+ * Swarm secrets, Kubernetes projected volumes, ECS and Nomad secret files. It matters because the
+ * alternative is a secret in an environment variable, and an environment variable is visible to
+ * `docker inspect`, to every process in the container, to a crash reporter that dumps the
+ * environment, and to any log line that prints `process.env`. For a signing key that is the whole
+ * compromise.
+ *
+ * `NAME` set directly still wins: a deployment that has no file mount must remain able to run, and
+ * a rule that silently preferred an empty file would be worse than no rule.
+ */
+const withSecretFiles = (
+  source: Readonly<Record<string, string | undefined>>,
+  read: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+): Readonly<Record<string, string | undefined>> => {
+  const resolved: Record<string, string | undefined> = { ...source };
+
+  for (const [key, value] of Object.entries(source)) {
+    if (!key.endsWith('_FILE') || value === undefined || value.trim() === '') continue;
+
+    const name = key.slice(0, -'_FILE'.length);
+    if (resolved[name] !== undefined && resolved[name] !== '') continue;
+
+    try {
+      // Trailing newlines are what an editor adds and what `echo` adds; a PEM does not mind one
+      // and a connection string very much does.
+      resolved[name] = read(value.trim()).replace(/\s+$/, '');
+    } catch (cause) {
+      throw new Error(
+        `${key} names ${value}, which could not be read. A secret mount that is absent at startup ` +
+          'is a service that would otherwise run without the secret it was configured to need.',
+        { cause },
+      );
+    }
+  }
+  return resolved;
+};
+
 /** Parse and validate. Throws once, listing every problem, rather than one per restart. */
 export const loadEnvironment = (
   source: Readonly<Record<string, string | undefined>> = process.env,
-): IdentityEnvironment => parseConfig(IDENTITY_SCHEMA, source);
+  readSecretFile?: (path: string) => string,
+): IdentityEnvironment =>
+  parseConfig(
+    IDENTITY_SCHEMA,
+    readSecretFile === undefined
+      ? withSecretFiles(source)
+      : withSecretFiles(source, readSecretFile),
+  );
 
 /** The rendering safe to log or serve: every field marked `secret` is replaced. */
 export const describeEnvironment = (resolved: IdentityEnvironment): Record<string, unknown> =>
