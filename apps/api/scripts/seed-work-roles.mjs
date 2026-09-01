@@ -47,11 +47,16 @@ const module_ = (name) => catalogue.filter((grant) => grant.startsWith(`work:${n
 const reads = (name) => module_(name).filter((grant) => grant.endsWith(':read'));
 
 /**
- * The staging operator.
+ * The staging roles.
  *
- * Composed to satisfy both halves of the acceptance test with real permissions: it can read a
- * person (`work:people:person:read`) and it deliberately holds nothing from payroll, so
+ * The operator is composed to satisfy both halves of the acceptance test with real permissions: it
+ * can read a person (`work:people:person:read`) and it deliberately holds nothing from payroll, so
  * `work:payroll:accounting` is a genuine 403 rather than a fabricated one.
+ *
+ * The recruiter exists so that shared staging can be tested by more than one person at once, and so
+ * that "these two accounts see different things" is something the environment can actually
+ * demonstrate. The two overlap only on People reads and each holds a whole module the other does
+ * not, which is what makes a cross-check meaningful in both directions.
  */
 const ROLES = [
   {
@@ -65,6 +70,16 @@ const ROLES = [
       ...module_('leave'),
       ...reads('attendance'),
     ],
+  },
+  {
+    key: 'work-staging-recruiter',
+    name: 'Munaxa Work — staging recruiter',
+    description:
+      'Recruitment and onboarding in Munaxa Work, plus People (read). Deliberately holds nothing ' +
+      'from leave or attendance, which the operator role does hold — so the two roles differ in ' +
+      'both directions and neither is a subset of the other. A multi-user test where one role ' +
+      'contains the other proves only that grants accumulate, not that they are separated.',
+    grants: () => [...module_('recruitment'), ...module_('onboarding'), ...reads('people')],
   },
 ];
 
@@ -120,7 +135,7 @@ const run = async () => {
       process.stdout.write(`${role.key}: ${grants.length} Work grants in organisation ${slug}.\n`);
     }
     process.stdout.write(
-      'Assignments are not made here. Grant a role to an account with db:bootstrap-account --role.\n',
+      'Assignments are not made here. Grant a role to an account with db:bootstrap-account --role.\n\nRESTART IDENTITY BEFORE THESE ROLES TAKE EFFECT.\n  This script writes role rows straight to the database, which is correct for provisioning and\n  insufficient on its own: the PermissionResolver caches role *definitions* in process,\n  and that cache is invalidated by RoleAdministration — a path a standalone script connecting\n  over pg cannot take. Neither the 60s Redis entry nor FLUSHALL clears it. Measured: a role\n  edited here kept resolving its previous grants indefinitely, and one restart fixed it.\n  This matters most when a grant is REMOVED, because the stale definition is the permissive one.\n',
     );
   } finally {
     client.release();

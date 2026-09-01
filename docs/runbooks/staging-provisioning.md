@@ -233,3 +233,28 @@ TEST_DIRECT_DATABASE_URL=postgresql://identity_mig:…@…/identity_test \
 The ownership reassignment is not optional: `pg_dump` restored as a superuser leaves the tables owned
 by that superuser, `FORCE ROW LEVEL SECURITY` does not constrain a superuser, and the RLS suite then
 proves nothing while passing.
+
+## Changing a role's permissions requires a restart
+
+Platform's `PermissionResolver` caches role _definitions_ in process. `RoleAdministration` owns the
+invalidation, and `seed-work-roles.mjs` cannot use it — it connects over `pg`, deliberately, because
+it runs during provisioning before any service exists. So a role written or edited by the seed is
+not visible to a _running_ Identity until that process restarts.
+
+Measured, not assumed: a role edited in the database kept resolving its previous grant set through a
+Redis `FLUSHALL`, through the 60-second permission-cache TTL, and across repeated sign-ins. One
+`docker compose restart identity` fixed it immediately.
+
+```bash
+pnpm --filter @identity/api db:seed-work-roles
+docker compose -f deploy/docker-compose.staging.yml restart identity   # not optional
+```
+
+**This matters most when a grant is removed.** The stale definition is the permissive one, so a role
+narrowed in the database goes on granting what it used to until the restart happens. Phase 9's
+measured revocation window (≈16m30s) covers _assignment_ changes made through `RoleAdministration`;
+it does not cover a role definition edited underneath a running process, which does not expire at
+all.
+
+Order roles before services, as the migration section already does, and treat any later role change
+as a deployment step rather than a database edit.
