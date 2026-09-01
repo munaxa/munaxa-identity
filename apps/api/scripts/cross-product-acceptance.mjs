@@ -95,7 +95,7 @@ const run = async () => {
   // The credential every case below uses, obtained the way a browser obtains one.
   const login = await signIn();
   const access = cookieFrom(login, '__Host-mx_session');
-  const refresh = cookieFrom(login, '__Host-mx_refresh');
+  const refresh = cookieFrom(login, '__Secure-mx_refresh');
   record(
     '   sign-in issues a session',
     login.status === 200 && access !== undefined,
@@ -187,12 +187,12 @@ const run = async () => {
     headers: {
       'content-type': 'application/json',
       origin: ORIGIN,
-      cookie: `__Host-mx_refresh=${refresh}`,
+      cookie: `__Secure-mx_refresh=${refresh}`,
     },
     body: '{}',
   });
   const newAccess = cookieFrom(refreshed, '__Host-mx_session');
-  const newRefresh = cookieFrom(refreshed, '__Host-mx_refresh');
+  const newRefresh = cookieFrom(refreshed, '__Secure-mx_refresh');
   record(
     '6 refresh issues a new access and a new refresh token',
     refreshed.status === 200 &&
@@ -219,7 +219,7 @@ const run = async () => {
     headers: {
       'content-type': 'application/json',
       origin: ORIGIN,
-      cookie: `__Host-mx_refresh=${refresh}`,
+      cookie: `__Secure-mx_refresh=${refresh}`,
     },
     body: '{}',
   });
@@ -233,7 +233,7 @@ const run = async () => {
     headers: {
       'content-type': 'application/json',
       origin: ORIGIN,
-      cookie: `__Host-mx_refresh=${newRefresh}`,
+      cookie: `__Secure-mx_refresh=${newRefresh}`,
     },
     body: '{}',
   });

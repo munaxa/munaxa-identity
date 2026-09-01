@@ -1,10 +1,4 @@
-import {
-  REFRESH_COOKIE,
-  SESSION_COOKIE,
-  clearCookie,
-  refreshCookie,
-  sessionCookie,
-} from '@munaxa/auth';
+import { SESSION_COOKIE, clearCookie, refreshCookie, sessionCookie } from '@munaxa/auth';
 import type { CookieInstruction } from '@munaxa/types';
 import type { Response } from 'express';
 
@@ -22,10 +16,41 @@ import type { Response } from 'express';
  * Identity and the portal that reads it must be reachable on one public origin. That is a routing
  * decision, not an application one — the services stay separate.
  */
-export { REFRESH_COOKIE, SESSION_COOKIE };
+export { SESSION_COOKIE };
 
 /** Where the refresh cookie is offered, and nowhere else. */
 export const REFRESH_PATH = '/api/auth/refresh';
+
+/**
+ * The refresh cookie's name, which is Identity's and not Platform's — the one place this file
+ * departs from `@munaxa/auth`, and it is a defect in Platform that forces it.
+ *
+ * `@munaxa/auth` exports `REFRESH_COOKIE = '__Host-mx_refresh'` and its own `refreshCookie` builder
+ * defaults that cookie to `path: '/api/auth/refresh'`. Those two facts cannot both hold. The
+ * `__Host-` prefix is not decoration: RFC 6265bis requires such a cookie to be `Secure`, carry no
+ * `Domain`, and have `Path=/` **exactly**. A `__Host-` cookie on any narrower path is rejected
+ * outright — not downgraded, not warned about, silently dropped.
+ *
+ * Measured, not reasoned about. Chromium was driven through the real sign-in form: the server sent
+ * `set-cookie: __Host-mx_refresh=…; Path=/api/auth/refresh`, and the browser's cookie jar afterwards
+ * contained the session cookie and nothing else. Every API-level test passed throughout, because
+ * they parse `Set-Cookie` themselves and no parser enforces the prefix rules a browser does. The
+ * user-visible consequence is that silent session renewal cannot work in a browser at all: when the
+ * fifteen-minute access token expires the person is signed out, with no refresh token to rotate.
+ *
+ * `__Secure-` is the correct prefix for a path-scoped cookie: it requires `Secure` and allows any
+ * path. What it does not carry is `__Host-`'s guarantee of host-only — but this cookie sets no
+ * `Domain` and the serializer below cannot emit one, so it is host-only in fact; the prefix simply
+ * stops enforcing it against an attacker who controls a sibling subdomain. Under ADR-0004 there is
+ * one origin and no sibling to control, and keeping the path narrow — so the refresh token is never
+ * sent to Munaxa Work's routes — is worth more here than a prefix the browser refuses to honour.
+ *
+ * Platform is frozen and this is not worked around silently: the defect is reported for its owners
+ * rather than patched here, per the five laws. Widening the path to `/` would also satisfy the
+ * prefix, and is the wrong trade — it would put the refresh token on every request to the shared
+ * origin, including every call into another product.
+ */
+export const REFRESH_COOKIE = '__Secure-mx_refresh';
 
 const serialize = (instruction: CookieInstruction): string => {
   const { name, value, options } = instruction;
@@ -62,7 +87,8 @@ export const issueCookies = (
 ): void => {
   setCookies(response, [
     sessionCookie(tokens.access, { maxAge: sessionMaxAge }),
-    refreshCookie(tokens.refresh, { path: REFRESH_PATH }),
+    // Platform's builder for the attributes, Identity's name for the reason above.
+    { ...refreshCookie(tokens.refresh, { path: REFRESH_PATH }), name: REFRESH_COOKIE },
   ]);
 };
 
