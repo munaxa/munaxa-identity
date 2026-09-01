@@ -223,8 +223,17 @@ export type IdentityEnvironment = Resolved<typeof IDENTITY_SCHEMA.fields>;
  * environment, and to any log line that prints `process.env`. For a signing key that is the whole
  * compromise.
  *
- * `NAME` set directly still wins: a deployment that has no file mount must remain able to run, and
- * a rule that silently preferred an empty file would be worse than no rule.
+ * **`NAME_FILE` wins over an ambient `NAME`, and that is the whole point.** The opposite rule
+ * looks more polite and is wrong: an ambient variable is not necessarily something an operator
+ * set. Prisma's client loads a `.env` file at import time to resolve its own datasource, so
+ * importing it populates `process.env.DATABASE_URL` from whatever `.env` is lying about — before
+ * this function runs. Under the file convention that variable is deliberately unset, so the stray
+ * development value won, and the service started, passed readiness and answered every sign-in with
+ * a generic 401 from the wrong database. Mounting a secret file is a deliberate act; inheriting an
+ * environment variable is not.
+ *
+ * An unreadable file is still an error rather than a fallback, for the same reason: a deployment
+ * that names a mount and does not get one must not quietly run on something else.
  */
 const withSecretFiles = (
   source: Readonly<Record<string, string | undefined>>,
@@ -236,7 +245,6 @@ const withSecretFiles = (
     if (!key.endsWith('_FILE') || value === undefined || value.trim() === '') continue;
 
     const name = key.slice(0, -'_FILE'.length);
-    if (resolved[name] !== undefined && resolved[name] !== '') continue;
 
     try {
       // Trailing newlines are what an editor adds and what `echo` adds; a PEM does not mind one

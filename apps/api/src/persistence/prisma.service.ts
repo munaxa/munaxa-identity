@@ -1,5 +1,8 @@
-import { Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import type { IdentityEnvironment } from '@identity/config';
+
 import { PrismaClient } from '../../../../node_modules/.prisma/identity-client';
+import { ENVIRONMENT } from '../tokens.js';
 
 /**
  * The database connection, and the only place a tenant context is established.
@@ -13,9 +16,23 @@ import { PrismaClient } from '../../../../node_modules/.prisma/identity-client';
  * Transaction-local rather than session-level, because a session-level `set_config` outlives the
  * connection checkout and would apply this organisation's context to whatever query used the
  * connection next.
+ *
+ * **The connection string comes from the validated configuration, never from the ambient
+ * environment**, and that is not a stylistic preference. Prisma resolves `env("DATABASE_URL")`
+ * itself and loads a `.env` file to do it, so a client constructed without an explicit datasource
+ * silently picks up whatever `DATABASE_URL` happens to be around. With secrets mounted as files —
+ * `DATABASE_URL_FILE`, which is how every deployment supplies them — `DATABASE_URL` is *unset*,
+ * and Prisma fills it from a development `.env` instead. The service then starts, passes its
+ * readiness probe, and answers every sign-in with a generic 401 because it is looking in the wrong
+ * database. That happened, in the first real staging deployment, and cost an hour: the symptom is
+ * indistinguishable from a wrong password.
  */
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+  public constructor(@Inject(ENVIRONMENT) environment: IdentityEnvironment) {
+    super({ datasources: { db: { url: environment.DATABASE_URL } } });
+  }
+
   public async onModuleInit(): Promise<void> {
     await this.$connect();
   }

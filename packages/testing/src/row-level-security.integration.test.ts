@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 
@@ -205,5 +207,24 @@ describe('what Identity deliberately does not copy from Munaxa Work', () => {
     // Every Platform port method here takes a tenant as its first argument, so the question never
     // arises — and a mechanism added by analogy would be a hole opened for a problem we do not have.
     expect(rows).toEqual([]);
+  });
+});
+
+describe('the connection the service actually opens', () => {
+  /**
+   * Prisma resolves `env("DATABASE_URL")` itself and loads a `.env` file to do it. A client built
+   * without an explicit datasource therefore connects to whatever `DATABASE_URL` is ambient — and
+   * under the `*_FILE` secret convention that variable is deliberately unset, so a development
+   * `.env` wins. The service starts, passes readiness, and answers every sign-in with a generic
+   * 401 from the wrong database. This asserts the datasource is taken from configuration, which is
+   * the only thing that stops it.
+   */
+  it('is the one the configuration names, not whatever DATABASE_URL happens to be', () => {
+    const source = readFileSync(
+      new URL('../../../apps/api/src/persistence/prisma.service.ts', import.meta.url),
+      'utf8',
+    );
+
+    expect(source).toContain('datasources: { db: { url: environment.DATABASE_URL } }');
   });
 });

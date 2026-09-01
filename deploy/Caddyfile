@@ -13,6 +13,11 @@
 #
 # Caddy is used because it obtains and renews TLS itself. Any reverse proxy does this job; what
 # matters is the path split and that it terminates TLS, because `Secure` cookies require it.
+#
+# Upstreams are variables with the compose service names as defaults, so this one file serves both
+# the compose topology and a host-networked deployment. Hardcoding the service names made the file
+# silently compose-only — it parses anywhere and routes nowhere else, which is the worst shape for
+# a configuration file to have.
 
 {$PUBLIC_HOST} {
 	encode zstd gzip
@@ -20,18 +25,18 @@
 	# Identity owns authentication. The path prefix is part of the issuer URL and of the refresh
 	# cookie's path, so it is not something a deployment may vary independently.
 	handle /api/auth/* {
-		reverse_proxy identity:4001
+		reverse_proxy {$IDENTITY_UPSTREAM:identity:4001}
 	}
 
 	# Munaxa Work's API. It receives the access token as a bearer header, forwarded by the portal
 	# server-side; the browser never calls it directly.
 	handle /api/v1/* {
-		reverse_proxy work-api:3000
+		reverse_proxy {$WORK_API_UPSTREAM:work-api:3000}
 	}
 
 	# The portal. Everything not claimed above.
 	handle {
-		reverse_proxy work-admin:3001
+		reverse_proxy {$WORK_ADMIN_UPSTREAM:work-admin:3001}
 	}
 
 	header {

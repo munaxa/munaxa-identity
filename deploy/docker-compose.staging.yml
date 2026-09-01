@@ -20,6 +20,12 @@ name: munaxa-staging
 secrets:
   # Docker secrets are files. Identity reads each through its `*_FILE` convention, so no secret is
   # ever an environment literal in this file or in the running container's environment.
+  #
+  # `npm_token` is a *build* secret, not a runtime one: BuildKit mounts it for the install step and
+  # it never reaches a layer. It is declared here because compose requires every secret a service
+  # names to be defined at the top level — a build secret included, which is easy to miss and
+  # fails the whole project rather than just the build.
+  npm_token: { environment: NODE_AUTH_TOKEN }
   identity_signing_private_key: { file: ./secrets/identity_signing_private_key.pem }
   identity_signing_secret: { file: ./secrets/identity_signing_secret }
   identity_database_url: { file: ./secrets/identity_database_url }

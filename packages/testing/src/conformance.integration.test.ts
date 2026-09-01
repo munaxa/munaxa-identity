@@ -70,8 +70,10 @@ beforeAll(async () => {
     [ACCOUNT, ACCOUNT_TENANT],
   );
 
-  process.env.DATABASE_URL = OWNER_URL;
-  prisma = new PrismaService();
+  // The datasource is supplied explicitly, exactly as the application supplies it. Relying on an
+  // ambient `DATABASE_URL` is the defect this constructor exists to prevent, and a test that
+  // relied on one would be reintroducing it.
+  prisma = new PrismaService({ DATABASE_URL: OWNER_URL } as never);
   await prisma.$connect();
 });
 

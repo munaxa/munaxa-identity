@@ -181,13 +181,27 @@ describe('secrets mounted as files', () => {
     expect(env.DATABASE_URL.endsWith('\n')).toBe(false);
   });
 
-  it('lets a directly set value win, so a deployment without mounts still runs', () => {
+  it('overrides an ambient value, because a mount is deliberate and an inherited variable is not', () => {
+    // The rule that cost a staging afternoon when it ran the other way. Prisma's client loads a
+    // `.env` at import time to resolve its own datasource, so `DATABASE_URL` is populated from a
+    // development file before configuration is read at all. Preferring it meant the service
+    // started, passed readiness, and answered every sign-in with a generic 401 — from the wrong
+    // database, which is indistinguishable from a wrong password.
     const env = loadEnvironment(
       {
         ...complete,
-        DATABASE_URL: 'postgresql://direct@localhost:5432/x',
+        DATABASE_URL: 'postgresql://a-stray-dot-env@localhost:5432/development',
         DATABASE_URL_FILE: '/run/secrets/db',
       },
+      read,
+    );
+
+    expect(env.DATABASE_URL).toBe('postgresql://identity_app:mounted@db:5432/identity');
+  });
+
+  it('still runs on a plain variable when no mount is named', () => {
+    const env = loadEnvironment(
+      { ...complete, DATABASE_URL: 'postgresql://direct@localhost:5432/x' },
       read,
     );
 
