@@ -38,6 +38,23 @@ loudly rather than deploying something unintended.
 
 Pinned commits: Identity `ef3410d`, Work API and Admin `ea1bdeb`.
 
+**The packages are private.** An anonymous pull of the published digest returns 401, so Render needs
+a registry credential or it fetches nothing and says so only at pull time. Create one in Render
+(Settings → Registry Credentials) named `ghcr-munaxa`, holding a GitHub token with `read:packages`
+on the organisation — read-only is the whole requirement, since nothing in Render pushes.
+
+Published so far:
+
+| Image                 | Commit    | Digest                                                                    |
+| --------------------- | --------- | ------------------------------------------------------------------------- |
+| `munaxa-identity-api` | `ef3410d` | `sha256:5a15c457fd95bd41824566d19522380e6b01e8955a73ec51a344f5601e3ecba5` |
+| `munaxa-work-api`     | `ea1bdeb` | not yet published                                                         |
+| `munaxa-work-admin`   | `ea1bdeb` | not yet published                                                         |
+
+Work's images are built by the same workflow, which is on its unmerged PR branch. Publishing them
+needs either a tag matching `image/**` pushed at that branch's head, or PR #20 merged so the
+workflow reaches the default branch and becomes dispatchable.
+
 ## Databases — two, never one
 
 Identity and Work do **not** share a database. `docs/runbooks/staging-provisioning.md` is explicit:

@@ -18,6 +18,12 @@
 # tags: a tag can move, and two hosts running "the same version" that disagree about what that is
 # costs more to diagnose than it ever saves.
 #
+# **The packages are private.** An anonymous pull of the published digest returns 401, so Render
+# cannot fetch these images without credentials — a blueprint without them deploys nothing and says
+# so only at pull time. `fromRegistryCreds: ghcr-munaxa` names a registry credential the operator
+# creates once in Render (Settings → Registry Credentials): a GitHub token with `read:packages` on
+# the munaxa organisation. Read-only is the whole requirement; nothing here needs to push.
+#
 # Every value below is either non-secret configuration or `sync: false`, which means Render prompts
 # for it and stores it as a secret. No credential is in this file, and none should ever be added.
 
@@ -60,6 +66,9 @@ services:
     region: singapore
     image:
       url: ghcr.io/munaxa/munaxa-identity-api@sha256:5a15c457fd95bd41824566d19522380e6b01e8955a73ec51a344f5601e3ecba5
+      creds:
+        fromRegistryCreds:
+          name: ghcr-munaxa
     healthCheckPath: /api/auth/health/ready
     envVars:
       - key: NODE_ENV
@@ -114,6 +123,9 @@ services:
     region: singapore
     image:
       url: ghcr.io/munaxa/munaxa-work-api@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      creds:
+        fromRegistryCreds:
+          name: ghcr-munaxa
     healthCheckPath: /health/ready
     envVars:
       - key: NODE_ENV
@@ -153,6 +165,9 @@ services:
     region: singapore
     image:
       url: ghcr.io/munaxa/munaxa-work-admin@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      creds:
+        fromRegistryCreds:
+          name: ghcr-munaxa
     envVars:
       - key: NODE_ENV
         value: production
