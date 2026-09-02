@@ -1,0 +1,183 @@
+# Munaxa staging on Render.
+#
+# This is the validated docker-compose topology, mapped onto Render's primitives with the shape
+# intact: one public origin in front of three private application services, Caddy still doing the
+# path split, and the database and cache reachable only from inside.
+#
+# **Why Caddy stays.** Render routes a custom domain to exactly one service; it has no path-based
+# routing across services. The `__Host-` session cookie requires a single origin for the portal and
+# the issuer both, so `/`, `/api/v1/*` and `/api/auth/*` must answer on one hostname. Dropping Caddy
+# would mean either three origins — which breaks the cookie prefix the whole session design rests
+# on — or merging the products behind one process. Caddy is the smaller thing to keep.
+#
+# **Why images rather than builds.** The Dockerfiles take the GitHub Packages credential as a
+# BuildKit secret (`--mount=type=secret,id=npm_token`), which Render's builder does not implement.
+# The alternative — a build ARG — writes the token into image history, which is the defect removed
+# in Phase 11 and not one to reintroduce for convenience. So the images are built where BuildKit
+# secrets do work (GitHub Actions), published to GHCR, and deployed here **by digest**. Digests, not
+# tags: a tag can move, and two hosts running "the same version" that disagree about what that is
+# costs more to diagnose than it ever saves.
+#
+# Every value below is either non-secret configuration or `sync: false`, which means Render prompts
+# for it and stores it as a secret. No credential is in this file, and none should ever be added.
+
+services:
+  # ---------------------------------------------------------------------------------------------
+  # The public origin. The only service with a URL.
+  # ---------------------------------------------------------------------------------------------
+  - type: web
+    name: munaxa-front-door
+    runtime: docker
+    plan: starter
+    region: singapore # nearest Render region to the Supabase project in ap-south-1
+    # Built by Render rather than pulled: this image installs nothing private, so it needs no
+    # BuildKit secret and none of the reasoning above applies to it. Pinned by commit through the
+    # blueprint's own repository, so it is still an immutable reference.
+    dockerfilePath: ./deploy/front-door.Dockerfile
+    dockerContext: ./deploy
+    healthCheckPath: /api/auth/health/live
+    envVars:
+      # The public hostname. Operator-supplied; deliberately not defaulted, because a wrong value
+      # here is a CSRF origin mismatch and an issuer mismatch at once, and both fail as 401s that
+      # look like credential problems.
+      - key: PUBLIC_HOST
+        sync: false
+      # Render's private services resolve on their service name over the private network.
+      - key: IDENTITY_UPSTREAM
+        value: munaxa-identity:4001
+      - key: WORK_API_UPSTREAM
+        value: munaxa-work-api:3000
+      - key: WORK_ADMIN_UPSTREAM
+        value: munaxa-work-admin:3001
+
+  # ---------------------------------------------------------------------------------------------
+  # Identity. Owns accounts, sessions, refresh lineages and the signing key.
+  # ---------------------------------------------------------------------------------------------
+  - type: pserv # private: no public URL, reachable only from the front door
+    name: munaxa-identity
+    runtime: image
+    plan: starter
+    region: singapore
+    image:
+      url: ghcr.io/munaxa/munaxa-identity-api@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+    healthCheckPath: /api/auth/health/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: '4001'
+      # Identity's own database — a *different* Supabase project from Work's. The provisioning
+      # runbook is explicit: "two databases, never one. No shared schema, no shared connection, no
+      # foreign key." Runtime connects as identity_app (NOBYPASSRLS).
+      - key: DATABASE_URL
+        sync: false
+      # Redis is not optional here. Lockout counters, rate limits and resolved permission sets live
+      # in it; without it, a lockout counter is not a limit. Supplied by the Key Value instance
+      # below, whose connection string Render injects.
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: munaxa-cache
+          property: connectionString
+      - key: IDENTITY_SIGNING_PRIVATE_KEY
+        sync: false
+      - key: IDENTITY_SIGNING_SECRET
+        sync: false
+      - key: IDENTITY_SIGNING_KID
+        sync: false
+      - key: IDENTITY_SIGNING_ALGORITHM
+        value: ES256
+      - key: IDENTITY_AUTH_AUDIENCE
+        value: munaxa-work
+      - key: IDENTITY_DEFAULT_ORGANISATION
+        sync: false
+      # Must equal PUBLIC_ORIGIN exactly, and must equal Work's PLATFORM_AUTH_ISSUER minus nothing:
+      # the comparison is character-for-character against the token's `iss`.
+      - key: IDENTITY_BASE_URL
+        sync: false
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      - key: LOG_PRETTY
+        value: 'false'
+      - key: APP_VERSION
+        value: 0.1.0
+      - key: BUILD_SHA
+        value: ef3410d
+
+  # ---------------------------------------------------------------------------------------------
+  # Work API. Verifies Identity's tokens with Platform's verifier; issues none of its own.
+  # ---------------------------------------------------------------------------------------------
+  - type: pserv
+    name: munaxa-work-api
+    runtime: image
+    plan: starter
+    region: singapore
+    image:
+      url: ghcr.io/munaxa/munaxa-work-api@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+    healthCheckPath: /health/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # work_app on the Supabase **transaction pooler** (port 6543). Prisma must be told it is
+      # behind PgBouncer or its prepared statements break. Size connection_limit deliberately:
+      # max_connections is 60 and Supabase's own services already hold about fourteen.
+      - key: DATABASE_URL
+        sync: false
+      - key: PII_MATCH_SECRET
+        sync: false
+      # These four must agree with Identity exactly. Nothing validates the agreement — a mismatch
+      # produces successful sign-ins and 401s on every authenticated request afterwards.
+      - key: PLATFORM_AUTH_ISSUER
+        sync: false
+      - key: PLATFORM_AUTH_AUDIENCE
+        value: munaxa-work
+      - key: PLATFORM_AUTH_ALGORITHM
+        value: ES256
+      # The **public** halves only, as a JSON array of {kid, publicKey}. Holds both keys during a
+      # rotation overlap. Work refuses a private key here, which is the check that catches a paste
+      # of the wrong half.
+      - key: PLATFORM_AUTH_PUBLIC_KEYS
+        sync: false
+      - key: APP_VERSION
+        value: 0.1.0
+      - key: BUILD_SHA
+        value: ea1bdeb
+
+  # ---------------------------------------------------------------------------------------------
+  # Work Admin. The portal; talks to the API server-side over the private network.
+  # ---------------------------------------------------------------------------------------------
+  - type: pserv
+    name: munaxa-work-admin
+    runtime: image
+    plan: starter
+    region: singapore
+    image:
+      url: ghcr.io/munaxa/munaxa-work-admin@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: '3001'
+      # Server-to-server, inside Render's private network. The browser never calls the API directly;
+      # it reaches everything through the one public origin.
+      - key: WORK_API_URL
+        value: http://munaxa-work-api:3000
+      - key: PLATFORM_SIGN_IN_URL
+        sync: false
+      - key: APP_VERSION
+        value: 0.1.0
+      - key: BUILD_SHA
+        value: ea1bdeb
+
+  # ---------------------------------------------------------------------------------------------
+  # Redis, for Identity alone.
+  #
+  # Work's REDIS_URL is optional in its configuration schema and its only consumer is a health
+  # label, so Work is deliberately given none rather than a connection it would not use.
+  # ---------------------------------------------------------------------------------------------
+  - type: redis
+    name: munaxa-cache
+    plan: starter
+    region: singapore
+    ipAllowList: [] # empty means private network only — no public access at all
+    maxmemoryPolicy: noeviction # lockout counters and rate limits must not be evicted under pressure
