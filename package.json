@@ -2,7 +2,7 @@
   "name": "munaxa-identity",
   "version": "0.1.0",
   "private": true,
-  "description": "Munaxa Identity — the ecosystem's authentication and authorization authority. An independent product repository: accounts, credentials, sessions, refresh lineages, roles and the authentication service. Consumes the shared security platform from @munaxa/*.",
+  "description": "Munaxa Identity \u2014 the ecosystem's authentication and authorization authority. An independent product repository: accounts, credentials, sessions, refresh lineages, roles and the authentication service. Consumes the shared security platform from @munaxa/*.",
   "license": "UNLICENSED",
   "packageManager": "pnpm@10.33.0",
   "engines": {
@@ -43,6 +43,9 @@
       "@prisma/engines",
       "esbuild",
       "prisma"
-    ]
+    ],
+    "overrides": {
+      "deepmerge-ts": "^8.0.0"
+    }
   }
 }
