@@ -59,7 +59,7 @@ services:
     plan: starter
     region: singapore
     image:
-      url: ghcr.io/munaxa/munaxa-identity-api@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      url: ghcr.io/munaxa/munaxa-identity-api@sha256:5a15c457fd95bd41824566d19522380e6b01e8955a73ec51a344f5601e3ecba5
     healthCheckPath: /api/auth/health/ready
     envVars:
       - key: NODE_ENV
