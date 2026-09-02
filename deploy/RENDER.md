@@ -63,12 +63,19 @@ disagree at the mechanism level — Work isolates on `app.tenant_id`, Identity o
 `identity.tenant_id` — so a shared database would need two isolation conventions in one `public`
 schema.
 
-Supabase gives one database per project, and its pooler only serves `postgres`. So Identity needs
-**its own Supabase project**. The free plan allows two projects per organisation, which is exactly
-enough and leaves no margin.
+Supabase gives one database per project, so Identity needs **its own Supabase project**. The free
+plan's two-project ceiling is per organisation, and the two projects sit in different
+organisations, so neither constrains the other.
 
-Work's project `qyqhnkfhtuoywcjpfrqn` is provisioned and validated (Phase 18). Identity's is not yet
-created.
+| Product  | Project                                            | Organisation           | Region     |
+| -------- | -------------------------------------------------- | ---------------------- | ---------- |
+| Work     | `munaxa-work's Project` (`qyqhnkfhtuoywcjpfrqn`)   | `lhyuumvpbikycsiugrhl` | ap-south-1 |
+| Identity | `munaxa-identity-staging` (`kuddkknzlxigxnqsdmza`) | `vhnsaozvjnghlfheeeai` | ap-south-1 |
+
+Both are provisioned and validated — Work in Phase 18, Identity in Phase 21. Identity's roles,
+privilege baseline and PostgREST closure are in `deploy/supabase/`, and the release-time migration
+procedure is `docs/runbooks/supabase-identity-staging.md`. Its `public` schema is deliberately
+empty: the first deployment applies the Prisma baseline to a clean database.
 
 ## Connections
 
