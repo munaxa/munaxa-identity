@@ -21,6 +21,14 @@ everything else → Work Admin.
 path-based routing across services. The `__Host-` session cookie requires the portal and the issuer
 to share an origin, so all three paths must answer on one hostname.
 
+**Caddy does not hold the certificate.** Render provides and renews it for the custom domain and
+terminates HTTPS at its edge, forwarding plain HTTP to `PORT`. So the baked `Caddyfile` listens on
+`:{$PORT:10000}`, sets `auto_https off`, and performs no HTTP→HTTPS redirect — a request that
+arrived over HTTPS reaches the container as HTTP, and an automatic upgrade would bounce a correct
+request for ever. `Caddyfile.tls` is the same routing addressed by hostname, for the compose
+topology where Caddy _is_ the TLS endpoint; both import `caddy-routes.caddyfile`, so the path split
+is one definition.
+
 ## Images
 
 Three are pulled by digest from GHCR; the front door is built by Render.

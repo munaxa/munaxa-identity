@@ -43,6 +43,12 @@ services:
     dockerContext: ./deploy
     healthCheckPath: /api/auth/health/live
     envVars:
+      # Render terminates HTTPS at its edge — it provides and renews the certificate for the custom
+      # domain — and forwards plain HTTP to the port named here. Caddy issues nothing and performs
+      # no HTTP→HTTPS redirect: a request that arrived over HTTPS reaches this process as HTTP, and
+      # an automatic upgrade would bounce a correct request for ever.
+      - key: PORT
+        value: '10000'
       # The public hostname. Operator-supplied; deliberately not defaulted, because a wrong value
       # here is a CSRF origin mismatch and an issuer mismatch at once, and both fail as 401s that
       # look like credential problems.

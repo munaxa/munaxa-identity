@@ -1,0 +1,60 @@
+# The path split, shared by every deployment of the front door.
+#
+# One public origin, three services behind it. This is not a convenience: Platform's session cookie
+# carries the `__Host-` prefix, which the *browser* enforces as secure, path `/`, and no `Domain`.
+# A host-only cookie set by an authentication host on a different origin is never sent to the
+# portal, and there is no cross-origin handoff in Platform to work around that — no `/authorize`,
+# no code exchange, no `redirect_uri` registry. So the origin is shared and the services are not.
+#
+# What this deliberately is not: an application. Identity and Munaxa Work stay separate products,
+# separate repositories, separate databases and separate deployments. A shared browser origin is a
+# routing fact, not an architectural merge — and putting them in one process to satisfy a cookie
+# rule would be the tail wagging the dog.
+#
+# Upstreams are variables with the compose service names as defaults, so the same routing serves
+# the compose topology and a Render deployment. Hardcoding the service names made the file
+# silently compose-only — it parses anywhere and routes nowhere else, which is the worst shape for
+# a configuration file to have.
+#
+# This file defines a snippet and serves no site by itself. It is imported by `Caddyfile`, which
+# terminates no TLS because Render's edge already has, and by `Caddyfile.tls`, which terminates
+# its own. Those two differ *only* in how they are addressed; the routing lives here once so the
+# two cannot drift apart.
+
+(munaxa_routes) {
+	encode zstd gzip
+
+	# Identity owns authentication. The path prefix is part of the issuer URL and of the refresh
+	# cookie's path, so it is not something a deployment may vary independently.
+	handle /api/auth/* {
+		reverse_proxy {$IDENTITY_UPSTREAM:identity:4001}
+	}
+
+	# Munaxa Work's API. It receives the access token as a bearer header, forwarded by the portal
+	# server-side; the browser never calls it directly.
+	handle /api/v1/* {
+		reverse_proxy {$WORK_API_UPSTREAM:work-api:3000}
+	}
+
+	# The portal. Everything not claimed above.
+	handle {
+		reverse_proxy {$WORK_ADMIN_UPSTREAM:work-admin:3001}
+	}
+
+	header {
+		# Belt and braces: each service sets its own security headers, and a header set here
+		# survives a response produced by the proxy itself rather than by a service.
+		#
+		# HSTS is still correct behind an edge that terminates TLS: the header describes the
+		# origin the browser talked to, which is HTTPS either way.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

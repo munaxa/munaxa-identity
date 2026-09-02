@@ -1,0 +1,17 @@
+# The front door for a deployment that terminates its own TLS — the compose topology, where Caddy
+# holds ports 80 and 443 directly and obtains the certificate over ACME.
+#
+# Caddy is used because it obtains and renews TLS itself. Any reverse proxy does this job; what
+# matters is the path split and that something terminates TLS, because `Secure` cookies require it.
+#
+# On Render that job belongs to Render's edge, so `Caddyfile` — not this file — is what is baked
+# into the image. The routing is imported by both, once.
+
+import caddy-routes.caddyfile
+
+# A host, not a URL: `PUBLIC_ORIGIN` is `https://<host>` and this is `<host>`. The file only parses
+# once a host is substituted — with no value the site header collapses to nothing and every
+# directive inside lands at global scope.
+{$PUBLIC_HOST} {
+	import munaxa_routes
+}

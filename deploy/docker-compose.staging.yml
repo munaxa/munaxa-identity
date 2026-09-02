@@ -45,7 +45,13 @@ services:
       # `PUBLIC_ORIGIN` is `https://<host>` and this is `<host>`.
       PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST, the public hostname this origin answers on}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # `Caddyfile.tls` is the form that terminates its own TLS, which is what this topology needs:
+      # Caddy holds 80 and 443 here and obtains the certificate over ACME. The Render image bakes
+      # `Caddyfile` instead, which listens on $PORT and issues nothing, because Render's edge has
+      # already terminated HTTPS. Both import the same routing snippet, so the path split is one
+      # definition rather than two that have to be kept in step.
+      - ./Caddyfile.tls:/etc/caddy/Caddyfile:ro
+      - ./caddy-routes.caddyfile:/etc/caddy/caddy-routes.caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     # Health conditions, not bare `depends_on`. Started-but-not-ready is the state that produces a
