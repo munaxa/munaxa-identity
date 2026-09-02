@@ -1,0 +1,142 @@
+# Publishing the Identity runtime image to GHCR, so Render can deploy a built artifact.
+#
+# Render's builder does not implement BuildKit secrets, and this Dockerfile takes the GitHub
+# Packages credential as one. Passing it as a build ARG instead would write the token into image
+# history, where anyone who can pull the image can read it — the defect removed in Phase 11. So the
+# image is built here, where BuildKit secrets work, and Render pulls it by digest.
+#
+# Publication is a decision about a specific validated commit, not something every push should do,
+# so this is deliberate-trigger only: a tag, or a dispatch naming the commit to build.
+
+name: Publish image
+
+on:
+  push:
+    tags:
+      - 'image/**'
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'Commit SHA to build. Defaults to the ref this runs on.'
+        required: false
+        type: string
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false # never cancel a half-finished push to a registry
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: munaxa-identity-api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The commit to build, deliberately not tied to where this workflow file lives: `.github/`
+          # and `deploy/` are both outside the runtime image, so a commit that only touches them
+          # produces a byte-identical image to the commit it sits on top of.
+          ref: ${{ inputs.commit || github.sha }}
+
+      - name: Record what is being built
+        id: source
+        run: |
+          echo "sha=$(git rev-parse HEAD)"            >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short HEAD)"  >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # The per-run token, scoped by `packages: write` above. Nothing longer-lived is needed to
+          # push, and nothing longer-lived should be used.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          # Two immutable references and no `latest`. A moving tag means two hosts can run "the same
+          # version" and disagree about what that is.
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/munaxa-identity-api:${{ steps.source.outputs.short }}
+            ghcr.io/${{ github.repository_owner }}/munaxa-identity-api:sha-${{ steps.source.outputs.sha }}
+          # Mounted at /run/secrets/npm_token for the layers that need it, and absent from every
+          # layer's filesystem and from image history.
+          secrets: |
+            npm_token=${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+          # A single-platform manifest, so the digest names the image rather than an index over it.
+          provenance: false
+          sbom: false
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.source.outputs.short }}
+
+      - name: Fail if no digest was produced
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # A push that reports success without a digest has published nothing pinnable, and the
+          # deployment after it would quietly be pinned to whatever the tag resolves to later.
+          if [ -z "$DIGEST" ]; then
+            echo "::error::build-push-action produced no digest; nothing pinnable was published"
+            exit 1
+          fi
+          echo "Published munaxa-identity-api@$DIGEST"
+
+      - name: Verify the published image
+        env:
+          REF: ghcr.io/${{ github.repository_owner }}/munaxa-identity-api@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker pull "$REF"
+
+          user=$(docker run --rm --entrypoint sh "$REF" -c 'id -un')
+          [ "$user" != "root" ] || { echo "::error::image runs as root"; exit 1; }
+          echo "runs as: $user"
+
+          # `pnpm install --prod` relinks but does not garbage-collect pnpm's store, so this is a
+          # real check: it caught vitest, eslint, turbo and the Nest CLI shipping in a "production"
+          # image once already.
+          for pkg in vitest eslint turbo '@nestjs+cli'; do
+            if docker run --rm --entrypoint sh "$REF" -c "ls -d /app/node_modules/.pnpm/${pkg}@* 2>/dev/null" | grep -q .; then
+              echo "::error::development dependency $pkg present in the runtime image"; exit 1
+            fi
+          done
+          echo "no development toolchain"
+
+          if docker history --no-trunc --format '{{.CreatedBy}}' "$REF" \
+               | grep -qE 'ghp_|github_pat_|_authToken=[A-Za-z0-9]'; then
+            echo "::error::a credential appears in image history"; exit 1
+          fi
+          echo "no credentials in history"
+
+          # Identity generates its client into node_modules/.prisma/identity-client rather than the
+          # default location, so the bare `@prisma/client` entry point is not what proves it works.
+          docker run --rm --entrypoint sh "$REF" -c \
+            'node -e "require(\"/app/node_modules/.prisma/identity-client\"); console.log(\"prisma client loads\")"'
+
+      - name: Summary
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### munaxa-identity-api"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| commit | \`${{ steps.source.outputs.sha }}\` |"
+            echo "| image | \`ghcr.io/${{ github.repository_owner }}/munaxa-identity-api\` |"
+            echo "| digest | \`$DIGEST\` |"
+            echo "| run | ${{ github.run_id }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
