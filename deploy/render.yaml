@@ -128,7 +128,7 @@ services:
     plan: starter
     region: singapore
     image:
-      url: ghcr.io/munaxa/munaxa-work-api@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      url: ghcr.io/munaxa/munaxa-work-api@sha256:395b973b681f56a0c9d372ea018b29c3bc99ce0ed029f810b17798118ab80f36
       creds:
         fromRegistryCreds:
           name: ghcr-munaxa
@@ -159,7 +159,7 @@ services:
       - key: APP_VERSION
         value: 0.1.0
       - key: BUILD_SHA
-        value: ea1bdeb
+        value: 869cceb22eb217528d8a58addfb60899f0b7209a
 
   # ---------------------------------------------------------------------------------------------
   # Work Admin. The portal; talks to the API server-side over the private network.
@@ -170,7 +170,7 @@ services:
     plan: starter
     region: singapore
     image:
-      url: ghcr.io/munaxa/munaxa-work-admin@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      url: ghcr.io/munaxa/munaxa-work-admin@sha256:89330919fd1b888aab829066b7d4d61b03d3e9425c4b207bd22ce8f2e5250a2f
       creds:
         fromRegistryCreds:
           name: ghcr-munaxa
@@ -188,7 +188,7 @@ services:
       - key: APP_VERSION
         value: 0.1.0
       - key: BUILD_SHA
-        value: ea1bdeb
+        value: 869cceb22eb217528d8a58addfb60899f0b7209a
 
   # ---------------------------------------------------------------------------------------------
   # Redis, for Identity alone.

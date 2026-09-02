@@ -38,13 +38,11 @@ The application Dockerfiles take the GitHub Packages credential as a BuildKit se
 a build ARG — writes the token into image history, which is the defect removed in Phase 11. So they
 are built in GitHub Actions, where BuildKit secrets work, and deployed here by digest.
 
-**This is the one repository change Render requires**: a workflow that builds and pushes
-`munaxa-identity-api`, `munaxa-work-api` and `munaxa-work-admin` to GHCR on the validated commits,
-and prints the digests. Until it exists, `render.yaml` cannot be applied — its four
-`REPLACE_WITH_PUBLISHED_DIGEST` placeholders are deliberate, so a half-configured blueprint fails
-loudly rather than deploying something unintended.
+A workflow in each repository builds and pushes `munaxa-identity-api`, `munaxa-work-api` and
+`munaxa-work-admin` to GHCR on a named commit and prints the digests. All three are published, so
+`render.yaml` carries real digests and no `REPLACE_WITH_PUBLISHED_DIGEST` placeholders remain.
 
-Pinned commits: Identity `ef3410d`, Work API and Admin `ea1bdeb`.
+Pinned commits: Identity `ef3410d`, Work API and Admin `869cceb`.
 
 **The packages are private.** An anonymous pull of the published digest returns 401, so Render needs
 a registry credential or it fetches nothing and says so only at pull time. Create one in Render
@@ -53,15 +51,15 @@ on the organisation — read-only is the whole requirement, since nothing in Ren
 
 Published so far:
 
-| Image                 | Commit    | Digest                                                                    |
-| --------------------- | --------- | ------------------------------------------------------------------------- |
-| `munaxa-identity-api` | `ef3410d` | `sha256:5a15c457fd95bd41824566d19522380e6b01e8955a73ec51a344f5601e3ecba5` |
-| `munaxa-work-api`     | `ea1bdeb` | not yet published                                                         |
-| `munaxa-work-admin`   | `ea1bdeb` | not yet published                                                         |
+| Image                 | Commit    | Digest                                                                    | Run           |
+| --------------------- | --------- | ------------------------------------------------------------------------- | ------------- |
+| `munaxa-identity-api` | `ef3410d` | `sha256:5a15c457fd95bd41824566d19522380e6b01e8955a73ec51a344f5601e3ecba5` | `33622309013` |
+| `munaxa-work-api`     | `869cceb` | `sha256:395b973b681f56a0c9d372ea018b29c3bc99ce0ed029f810b17798118ab80f36` | `33634221986` |
+| `munaxa-work-admin`   | `869cceb` | `sha256:89330919fd1b888aab829066b7d4d61b03d3e9425c4b207bd22ce8f2e5250a2f` | `33634221986` |
 
-Work's images are built by the same workflow, which is on its unmerged PR branch. Publishing them
-needs either a tag matching `image/**` pushed at that branch's head, or PR #20 merged so the
-workflow reaches the default branch and becomes dispatchable.
+`869cceb` is the merge commit of PR #20, and its tree is identical to `1d927ee` — the merge took a
+base that had not moved, so `git diff 1d927ee 869cceb` is empty. The Work images therefore
+correspond byte-for-byte to the commit CI is green on.
 
 ## Databases — two, never one
 
