@@ -139,3 +139,73 @@ describe('sign-in failure semantics', () => {
     }
   });
 });
+
+/**
+ * The Phase 12 gap, which is the Phase 11 fix left half-finished.
+ *
+ * `failureOf` was correct and the try that called it was too small. It wrapped the call to
+ * `authenticate` alone, while `organisation()` — which must resolve a tenant before any account can
+ * be looked up — and the session write afterwards both sit outside it and are both database work.
+ * Measured against the running deployment: with Redis stopped a sign-in answered 503, and with
+ * PostgreSQL stopped the same sign-in answered 500, because the throw never reached the classifier.
+ */
+describe('a failure before authentication is classified too', () => {
+  const buildWithFailingTenantLookup = (options: { databaseReachable?: boolean }) => {
+    const probes = { cache: 0, database: 0 };
+    const security = {
+      tenants: {
+        idForKey: () => Promise.reject(new Error('connect ECONNREFUSED 127.0.0.1:5432')),
+      },
+      login: { authenticate: () => Promise.reject(new Error('never reached')) },
+      cacheReachable: () => {
+        probes.cache += 1;
+        return Promise.resolve(true);
+      },
+    } as unknown as ConstructorParameters<typeof AuthService>[0];
+
+    const environment = {
+      IDENTITY_DEFAULT_ORGANISATION: 'acme',
+      SESSION_COOKIE_MAX_AGE: 900,
+    } as unknown as ConstructorParameters<typeof AuthService>[1];
+
+    const prisma = {
+      $queryRaw: () => {
+        probes.database += 1;
+        return (options.databaseReachable ?? true)
+          ? Promise.resolve([{ '?column?': 1 }])
+          : Promise.reject(new Error('ECONNREFUSED'));
+      },
+    } as unknown as ConstructorParameters<typeof AuthService>[2];
+
+    return new AuthService(security, environment, prisma);
+  };
+
+  it('answers dependency-unavailable when the database is down', async () => {
+    const service = buildWithFailingTenantLookup({ databaseReachable: false });
+
+    const result = await service.login({
+      identifier: 'someone@acme.example',
+      password: 'whatever-it-does-not-matter',
+      correlationId: 'corr-1' as never,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.failure).toEqual({
+      kind: 'dependency-unavailable',
+      dependency: 'database',
+    });
+  });
+
+  it('still refuses generically, never openly, when every dependency answers', async () => {
+    const service = buildWithFailingTenantLookup({ databaseReachable: true });
+
+    const result = await service.login({
+      identifier: 'someone@acme.example',
+      password: 'whatever-it-does-not-matter',
+      correlationId: 'corr-1' as never,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.failure).toEqual({ kind: 'invalid-credentials' });
+  });
+});

@@ -105,7 +105,28 @@ export class AuthService {
     return key === '' ? undefined : this.security.tenants.idForKey(key);
   }
 
+  /**
+   * Sign in.
+   *
+   * The whole body is classified, not just the call to `authenticate`. Phase 11 taught this the
+   * expensive way: the dependency probe was wrapped around the authentication call alone, so a
+   * cache outage produced a clean 503 while a *database* outage escaped as an unhandled 500 —
+   * from `organisation` above, which must run before any account can be looked up, and from the
+   * session write below. Both are database work, and both were outside the one try that knew what
+   * a dependency failure looks like.
+   *
+   * It still never fails open: `failureOf` returns a generic refusal when every dependency answers
+   * and the error is unrecognised, so an unexplained failure anywhere in this method is a refusal.
+   */
   public async login(request: LoginRequest): Promise<LoginResult> {
+    try {
+      return await this.attemptLogin(request);
+    } catch (error) {
+      return { ok: false, failure: await this.failureOf(error) };
+    }
+  }
+
+  private async attemptLogin(request: LoginRequest): Promise<LoginResult> {
     const tenantId = await this.organisation(request.organisation);
     if (tenantId === undefined) {
       return { ok: false, failure: { kind: 'unknown-organisation' } };
@@ -144,7 +165,16 @@ export class AuthService {
     return this.issue(tenantId, account.userId, account.tokenVersion, session.id);
   }
 
+  /** Rotate a session. Classified end to end for the same reason `login` is. */
   public async refresh(request: RefreshRequest): Promise<LoginResult> {
+    try {
+      return await this.attemptRefresh(request);
+    } catch (error) {
+      return { ok: false, failure: await this.failureOf(error) };
+    }
+  }
+
+  private async attemptRefresh(request: RefreshRequest): Promise<LoginResult> {
     const tenantId = await this.organisation(request.organisation);
     if (tenantId === undefined) {
       return { ok: false, failure: { kind: 'unknown-organisation' } };
