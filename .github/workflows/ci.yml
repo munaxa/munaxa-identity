@@ -13,7 +13,13 @@ env:
   # Never a real value, and never a default that would let a test pass with a weak one. The key is
   # generated per run, so nothing key-shaped exists in this file or in the repository.
   TEST_DATABASE_URL: postgresql://identity_app:identity_app@localhost:5432/identity_test
-  TEST_DIRECT_DATABASE_URL: postgresql://identity:identity@localhost:5432/identity_test
+  # The *owner* is a non-superuser, and that is the whole point rather than a detail. FORCE ROW
+  # LEVEL SECURITY does not constrain a superuser, so pointing this at the container's superuser
+  # makes the row-level-security suite assert nothing while appearing to run. A deployment's
+  # migration role is an ordinary role; CI uses one too.
+  TEST_DIRECT_DATABASE_URL: postgresql://identity_mig:identity_mig@localhost:5432/identity_test
+  # Used only to create those roles and hand the schema to the migration role.
+  TEST_SUPERUSER_URL: postgresql://identity:identity@localhost:5432/identity_test
 
 jobs:
   verify:
@@ -77,18 +83,23 @@ jobs:
       # test setup — it is the difference between testing the deployment and testing a superuser.
       - name: Provision the database roles
         run: |
-          psql "$TEST_DIRECT_DATABASE_URL" -v ON_ERROR_STOP=1 -c "
+          psql "$TEST_SUPERUSER_URL" -v ON_ERROR_STOP=1 -c "
+            create role identity_mig login password 'identity_mig'
+              nosuperuser nobypassrls nocreatedb nocreaterole noreplication;
             create role identity_app login password 'identity_app'
-              nosuperuser nobypassrls nocreatedb nocreaterole noreplication;"
+              nosuperuser nobypassrls nocreatedb nocreaterole noreplication;
+            alter schema public owner to identity_mig;
+            grant create on database identity_test to identity_mig;"
         env:
           PGPASSWORD: identity
 
+      # Applied as the migration role, so the tables are owned by it rather than by a superuser.
       - name: Migrate from zero
         run: |
           psql "$TEST_DIRECT_DATABASE_URL" -v ON_ERROR_STOP=1 \
             -f prisma/migrations/20260901120000_identity_baseline/migration.sql
         env:
-          PGPASSWORD: identity
+          PGPASSWORD: identity_mig
 
       - name: Grant the application role what it uses, and nothing more
         run: |
@@ -100,7 +111,7 @@ jobs:
               identity_reset_token to identity_app;
             grant select, insert on identity_audit_event to identity_app;"
         env:
-          PGPASSWORD: identity
+          PGPASSWORD: identity_mig
 
       - name: Migration validation
         run: pnpm prisma:validate
