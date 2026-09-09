@@ -93,7 +93,7 @@ services:
       # below, whose connection string Render injects.
       - key: REDIS_URL
         fromService:
-          type: redis
+          type: keyvalue
           name: munaxa-cache
           property: connectionString
       - key: IDENTITY_SIGNING_PRIVATE_KEY
@@ -199,7 +199,7 @@ services:
   # Work's REDIS_URL is optional in its configuration schema and its only consumer is a health
   # label, so Work is deliberately given none rather than a connection it would not use.
   # ---------------------------------------------------------------------------------------------
-  - type: redis
+  - type: keyvalue
     name: munaxa-cache
     plan: free
     region: singapore
