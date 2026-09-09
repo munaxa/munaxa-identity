@@ -71,7 +71,7 @@ services:
     plan: starter
     region: singapore
     image:
-      url: ghcr.io/munaxa/munaxa-identity-api@sha256:5a15c457fd95bd41824566d19522380e6b01e8955a73ec51a344f5601e3ecba5
+      url: ghcr.io/munaxa/munaxa-identity-api@sha256:6f7b6fb7c03e99f9e50da250c95ce51ba2b1957579b168f9357f8bac7bc3e718
       creds:
         fromRegistryCreds:
           name: ghcr-munaxa
@@ -119,7 +119,7 @@ services:
       - key: APP_VERSION
         value: 0.1.0
       - key: BUILD_SHA
-        value: ef3410d
+        value: 7e2eb6af8b691b5874c679467cf20e997cae4255
 
   # ---------------------------------------------------------------------------------------------
   # Work API. Verifies Identity's tokens with Platform's verifier; issues none of its own.

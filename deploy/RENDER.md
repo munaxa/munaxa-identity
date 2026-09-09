@@ -42,7 +42,7 @@ A workflow in each repository builds and pushes `munaxa-identity-api`, `munaxa-w
 `munaxa-work-admin` to GHCR on a named commit and prints the digests. All three are published, so
 `render.yaml` carries real digests and no `REPLACE_WITH_PUBLISHED_DIGEST` placeholders remain.
 
-Pinned commits: Identity `ef3410d`, Work API and Admin `869cceb`.
+Pinned commits: Identity `7e2eb6a`, Work API and Admin `869cceb`.
 
 **The packages are private.** An anonymous pull of the published digest returns 401, so Render needs
 a registry credential or it fetches nothing and says so only at pull time. Create one in Render
@@ -53,7 +53,7 @@ Published so far:
 
 | Image                 | Commit    | Digest                                                                    | Run           |
 | --------------------- | --------- | ------------------------------------------------------------------------- | ------------- |
-| `munaxa-identity-api` | `ef3410d` | `sha256:5a15c457fd95bd41824566d19522380e6b01e8955a73ec51a344f5601e3ecba5` | `33622309013` |
+| `munaxa-identity-api` | `7e2eb6a` | `sha256:6f7b6fb7c03e99f9e50da250c95ce51ba2b1957579b168f9357f8bac7bc3e718` | `34323444447` |
 | `munaxa-work-api`     | `869cceb` | `sha256:395b973b681f56a0c9d372ea018b29c3bc99ce0ed029f810b17798118ab80f36` | `33634221986` |
 | `munaxa-work-admin`   | `869cceb` | `sha256:89330919fd1b888aab829066b7d4d61b03d3e9425c4b207bd22ce8f2e5250a2f` | `33634221986` |
 
