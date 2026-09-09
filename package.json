@@ -45,7 +45,8 @@
       "prisma"
     ],
     "overrides": {
-      "deepmerge-ts": "^8.0.0"
+      "deepmerge-ts": "^8.0.0",
+      "multer": "^2.3.0"
     }
   }
 }
