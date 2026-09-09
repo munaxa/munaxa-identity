@@ -75,7 +75,9 @@ services:
       creds:
         fromRegistryCreds:
           name: ghcr-munaxa
-    healthCheckPath: /api/auth/health/ready
+    # No health check path here: Render rejects one on a private service — "pserv service type
+    # cannot have a health check path". The endpoint itself is unchanged and still answers on
+    # /api/auth/health/ready, through the front door or from inside the private network.
     envVars:
       - key: NODE_ENV
         value: production
@@ -132,7 +134,8 @@ services:
       creds:
         fromRegistryCreds:
           name: ghcr-munaxa
-    healthCheckPath: /health/ready
+    # No health check path, for the same reason as Identity above. /health/ready still answers;
+    # nothing about the application changed.
     envVars:
       - key: NODE_ENV
         value: production
