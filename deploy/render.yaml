@@ -34,7 +34,7 @@ services:
   - type: web
     name: munaxa-front-door
     runtime: docker
-    plan: starter
+    plan: free
     region: singapore # nearest Render region to the Supabase project in ap-south-1
     # Built by Render rather than pulled: this image installs nothing private, so it needs no
     # BuildKit secret and none of the reasoning above applies to it. Pinned by commit through the
@@ -68,7 +68,7 @@ services:
   - type: pserv # private: no public URL, reachable only from the front door
     name: munaxa-identity
     runtime: image
-    plan: starter
+    plan: 0.5c-512mb
     region: singapore
     image:
       url: ghcr.io/munaxa/munaxa-identity-api@sha256:6f7b6fb7c03e99f9e50da250c95ce51ba2b1957579b168f9357f8bac7bc3e718
@@ -127,7 +127,7 @@ services:
   - type: pserv
     name: munaxa-work-api
     runtime: image
-    plan: starter
+    plan: 0.5c-512mb
     region: singapore
     image:
       url: ghcr.io/munaxa/munaxa-work-api@sha256:395b973b681f56a0c9d372ea018b29c3bc99ce0ed029f810b17798118ab80f36
@@ -170,7 +170,7 @@ services:
   - type: pserv
     name: munaxa-work-admin
     runtime: image
-    plan: starter
+    plan: 0.5c-512mb
     region: singapore
     image:
       url: ghcr.io/munaxa/munaxa-work-admin@sha256:89330919fd1b888aab829066b7d4d61b03d3e9425c4b207bd22ce8f2e5250a2f
@@ -201,7 +201,7 @@ services:
   # ---------------------------------------------------------------------------------------------
   - type: redis
     name: munaxa-cache
-    plan: starter
+    plan: free
     region: singapore
     ipAllowList: [] # empty means private network only — no public access at all
     maxmemoryPolicy: noeviction # lockout counters and rate limits must not be evicted under pressure
