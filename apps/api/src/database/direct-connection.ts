@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import type { ClientConfig } from 'pg';
 
 /**
@@ -118,6 +119,23 @@ export const directConnection = (
   }
 
   const production = source.NODE_ENV === 'production';
+
+  /**
+   * Verified TLS needs a host *name*. For an IP-literal host `pg` sends no server name, and Node then
+   * checks the certificate against "localhost" rather than the address connected to — measured: a
+   * certificate issued only for `localhost` verified a connection to 127.0.0.1. Against RDS that
+   * fails closed (no RDS certificate names localhost), but it is not host-name verification, so it is
+   * refused outright. An RDS endpoint is always a DNS name; use it.
+   */
+  const refuseAddressForVerifiedTls = (): void => {
+    if (isIP(url.hostname.replace(/^\[|\]$/g, '')) !== 0) {
+      throw new ConnectionConfigurationError(
+        `DIRECT_DATABASE_URL names the host by IP address (${url.hostname}). Verified TLS checks the ` +
+          'certificate against a host name, and pg cannot do that for an address. Use the database ' +
+          'endpoint’s DNS name — for RDS, the instance endpoint.',
+      );
+    }
+  };
   const ca = fromSourceOrFile(source, 'DATABASE_TLS_CA', read);
   const sslmode = url.searchParams.get('sslmode') ?? undefined;
   const describe = {
@@ -128,6 +146,7 @@ export const directConnection = (
   };
 
   if (ca !== undefined) {
+    refuseAddressForVerifiedTls();
     if (!ca.includes('-----BEGIN CERTIFICATE-----')) {
       throw new ConnectionConfigurationError(
         'DATABASE_TLS_CA is not a PEM certificate bundle. For RDS it is the region bundle from ' +
@@ -150,6 +169,7 @@ export const directConnection = (
   }
 
   if (sslmode === 'verify-full') {
+    refuseAddressForVerifiedTls();
     return {
       config: { connectionString: url.toString() },
       describe: { ...describe, tls: 'verify-full (system trust store)' },
@@ -178,3 +198,21 @@ export const directConnection = (
     describe: { ...describe, tls: 'none' },
   };
 };
+
+/**
+ * The client settings every owner connection uses: the verified connection above, named so it can
+ * be found in `pg_stat_activity`, and bounded so an unreachable database fails the task instead of
+ * hanging it.
+ *
+ * The one place these are set, for every consumer: the migration runner (`migrate.ts`) and the
+ * provisioning scripts (`scripts/owner-connection.mjs`, which loads this module from `dist`). Nothing
+ * else builds an owner connection, so nothing else can build one with weaker TLS.
+ */
+export const ownerClientConfig = (
+  connection: DirectConnection,
+  applicationName: string,
+): ClientConfig => ({
+  ...connection.config,
+  application_name: applicationName,
+  connectionTimeoutMillis: 15_000,
+});

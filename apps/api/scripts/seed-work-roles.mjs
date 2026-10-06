@@ -22,13 +22,16 @@
  * writes roles only through the permission-gated administration path.
  *
  *   DIRECT_DATABASE_URL=… node apps/api/scripts/seed-work-roles.mjs --organisation <slug>
+ *
+ * The connection — the owner credential and its verified TLS (`DATABASE_TLS_CA` against RDS) — is
+ * the migration runner's, through `owner-connection.mjs`; see `docs/runbooks/migrations.md`.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import pg from 'pg';
+import { describeOwnerDatabase, ownerDatabase } from './owner-connection.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CATALOGUE = resolve(here, '../../../artifacts/work-permissions.json');
@@ -89,14 +92,15 @@ const fail = (message) => {
 };
 
 const run = async () => {
-  const connection = process.env.DIRECT_DATABASE_URL ?? process.env.TEST_DIRECT_DATABASE_URL;
+  // First, so a missing owner credential or an unverifiable TLS configuration stops the script
+  // before anything else happens. It does not connect yet.
+  const database = await ownerDatabase('munaxa-identity-seed-roles');
   const slug = (argument('organisation') ?? process.env.IDENTITY_DEFAULT_ORGANISATION ?? '').trim();
 
-  if (!connection)
-    fail('Set DIRECT_DATABASE_URL to a migrated Identity database, as the migration owner.');
   if (slug === '') fail('Give --organisation <slug>: roles are per-organisation, never global.');
 
-  const pool = new pg.Pool({ connectionString: connection, max: 1 });
+  process.stdout.write(describeOwnerDatabase(database.describe));
+  const pool = database.openPool();
   const client = await pool.connect();
 
   try {

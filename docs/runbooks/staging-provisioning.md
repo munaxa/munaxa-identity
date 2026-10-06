@@ -151,6 +151,10 @@ line catches the most common misconfiguration in this whole runbook.
 **Ordering point 3: the account exists in Identity before Work's tenant is bootstrapped**, because
 Work's bootstrap takes the account's `sub` as its argument.
 
+These scripts connect exactly as the migration runner does — `DIRECT_DATABASE_URL` for the owner,
+and against RDS `DATABASE_TLS_CA` (the regional bundle) for verified TLS; a plain URL is refused in
+production. On AWS they run as one-off ECS tasks; see `migrations.md`, "The provisioning scripts".
+
 ```bash
 # 14 — the organisation and the account, as the migration owner: provisioning an organisation is
 #      not something the application role may do, and this script does not ask it to.

@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 
 import { Client, type ClientConfig } from 'pg';
 
-import { directConnection } from './database/direct-connection.js';
+import { directConnection, ownerClientConfig } from './database/direct-connection.js';
 import {
   discoverMigrations,
   runMigrations,
@@ -51,11 +51,7 @@ const defaultMigrationsDirectory = (): string =>
 const connectWithPg = async (
   config: ClientConfig,
 ): Promise<SqlClient & { end(): Promise<void> }> => {
-  const client = new Client({
-    ...config,
-    application_name: 'munaxa-identity-migrate',
-    connectionTimeoutMillis: 15_000,
-  });
+  const client = new Client(config);
   // A connection the server drops — an RDS failover or reboot mid-migration — is emitted as an
   // `error` event as well as rejecting the query in flight. With no listener, Node treats the event
   // as fatal and the task dies with a stack trace instead of the `migrate.failed` line an operator
@@ -103,7 +99,9 @@ export const main = async (
       migrations: migrations.map((migration) => migration.name),
     });
 
-    client = await (dependencies.connect ?? connectWithPg)(connection.config);
+    client = await (dependencies.connect ?? connectWithPg)(
+      ownerClientConfig(connection, 'munaxa-identity-migrate'),
+    );
     const summary = await runMigrations({
       client,
       migrations,

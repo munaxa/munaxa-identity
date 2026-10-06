@@ -142,3 +142,41 @@ describe('TLS without a configured CA', () => {
     expect(effectiveSsl(connection.config)).toBe(false);
   });
 });
+
+describe('verified TLS and the host', () => {
+  // `pg` sends no TLS server name for an IP-literal host, and Node then checks the certificate
+  // against "localhost" — measured against a real server. That is not host-name verification.
+  it('refuses an IP-literal host when verification is in effect', () => {
+    for (const host of ['10.0.4.17', '[fd00::17]']) {
+      const url = `postgresql://identity_mig:pw@${host}:5432/identity`;
+
+      expect(() => directConnection({ DIRECT_DATABASE_URL: url, DATABASE_TLS_CA: CA })).toThrow(
+        /IP address/,
+      );
+      expect(() =>
+        directConnection({
+          DIRECT_DATABASE_URL: `${url}?sslmode=verify-full`,
+          NODE_ENV: 'production',
+        }),
+      ).toThrow(/IP address/);
+    }
+  });
+
+  it('accepts the endpoint’s DNS name, as RDS gives it', () => {
+    const connection = directConnection({
+      DIRECT_DATABASE_URL:
+        'postgresql://identity_mig:pw@identity.abc123xyz.eu-west-1.rds.amazonaws.com:5432/identity',
+      DATABASE_TLS_CA: CA,
+      NODE_ENV: 'production',
+    });
+
+    expect(connection.describe.tls).toBe('verify-full (configured CA)');
+  });
+
+  it('still lets a local, unencrypted database be named by address outside production', () => {
+    expect(
+      directConnection({ DIRECT_DATABASE_URL: 'postgresql://identity_mig@127.0.0.1:5432/identity' })
+        .describe.tls,
+    ).toBe('none');
+  });
+});

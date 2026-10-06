@@ -41,6 +41,42 @@ it; `sslmode=no-verify` silently disables verification). Without a CA, productio
 `sslmode=verify-full` against the system trust store, which does not contain Amazon's RDS CAs — so on
 RDS the CA is required. There is no way to configure encrypted-but-unverified.
 
+**Name the host, never its address.** Verified TLS is refused for an IP-literal host. `pg` sends no
+TLS server name for an address, and Node then checks the certificate against `localhost` instead of
+the address — measured: a certificate issued only for `localhost` verified a connection to
+`127.0.0.1`. Use the RDS instance endpoint (`<id>.<hash>.<region>.rds.amazonaws.com`).
+
+**The same connection, everywhere.** `bootstrap-account.mjs` and `seed-work-roles.mjs` connect through
+the same module (`src/database/direct-connection.ts`, loaded from `dist` by
+`scripts/owner-connection.mjs`), with the same variables and the same refusals. Each prints one line
+before it connects — `Database identity_mig@<host>:5432/identity — TLS verify-full (configured CA).` —
+which is the line to check.
+
+### The CA bundle, and where it can live
+
+Use Amazon's **regional** bundle for the region the database is in. Measured on 2026-10-06:
+
+| Bundle                                                                          | Size              | Certificates |
+| ------------------------------------------------------------------------------- | ----------------- | ------------ |
+| Regional (`eu-west-1`, `eu-central-1`, `us-east-1`, `ap-south-1`, `me-south-1`) | 4,576–4,600 bytes | 3            |
+| Global (`global-bundle.pem`)                                                    | 169,984 bytes     | 111          |
+
+Against the stores an ECS task can inject from:
+
+| Store                                             | Maximum value | Regional bundle     | Global bundle |
+| ------------------------------------------------- | ------------- | ------------------- | ------------- |
+| **Secrets Manager** (plaintext secret)            | 64 KB         | **fits — use this** | does not fit  |
+| SSM Parameter Store, **advanced** tier            | 8 KB          | fits                | does not fit  |
+| SSM Parameter Store, standard tier                | 4 KB          | **does not fit**    | does not fit  |
+| One environment variable (Linux limit per string) | 128 KiB       | fits                | does not fit  |
+
+So: store the regional bundle's PEM text, unmodified, as a plaintext Secrets Manager secret (or an
+advanced-tier parameter) and inject it as `DATABASE_TLS_CA`. The global bundle cannot be injected as
+an environment variable at all; if it were ever needed it would have to be a file in the image and
+`DATABASE_TLS_CA_FILE` — which is not done, because the regional bundle is the narrower trust and
+fits. When Amazon rotates RDS certificate authorities, refresh the stored bundle from the same URL
+before the instance switches CA.
+
 ## AWS staging: the one-off ECS task
 
 Same task family as the Identity service — same image digest, same private subnets — with:
@@ -48,7 +84,7 @@ Same task family as the Identity service — same image digest, same private sub
 ```text
 command            ["node", "dist/migrate.js"]          (working directory is /app/apps/api)
 secrets            DIRECT_DATABASE_URL  ← Secrets Manager: identity-mig database URL
-                   DATABASE_TLS_CA      ← Secrets Manager or SSM: the RDS region bundle (PEM)
+                   DATABASE_TLS_CA      ← Secrets Manager (plaintext): the RDS regional bundle, PEM
 execution role     may read exactly those two, pull the image, write logs — never the service's
                    signing key or runtime DATABASE_URL
 security group     egress 5432 to the Identity RDS security group; nothing inbound
@@ -56,6 +92,26 @@ logs               awslogs, e.g. /ecs/<env>/identity-migrate
 ```
 
 No port mapping, no load balancer and no health check: the process opens no socket and exits.
+
+### The provisioning scripts, as one-off tasks
+
+Same image, same task shape and the same two secrets as the migration task, plus the operator's
+account details for the bootstrap. Run them after the migration task, in this order
+(`staging-provisioning.md` steps 14–16):
+
+```text
+1  bootstrap   ["node", "scripts/bootstrap-account.mjs", "--organisation", "<slug>", "--organisation-name", "<Name>"]
+               + IDENTITY_OWNER_EMAIL (configuration), IDENTITY_OWNER_PASSWORD (secret)
+2  seed roles  ["node", "scripts/seed-work-roles.mjs", "--organisation", "<slug>"]
+3  assign      ["node", "scripts/bootstrap-account.mjs", "--organisation", "<slug>", "--role", "work-staging-operator"]
+               + IDENTITY_OWNER_EMAIL, IDENTITY_OWNER_PASSWORD
+```
+
+Both need `DIRECT_DATABASE_URL` (or `_FILE`) and, with `NODE_ENV=production` as the image sets it,
+`DATABASE_TLS_CA` (or `_FILE`). Neither needs Redis, the signing key or the runtime `DATABASE_URL`,
+and neither starts the HTTP service. Each exits non-zero on any refusal or failure. The bootstrap
+prints the account's `sub` for Munaxa Work's `db:bootstrap`. Restart the Identity service after
+seeding roles (`staging-provisioning.md`, "Changing a role's permissions requires a restart").
 
 ### Before deploying a new Identity version
 

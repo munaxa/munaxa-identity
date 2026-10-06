@@ -16,6 +16,7 @@
     "lint": { "dependsOn": ["^build"] },
     "typecheck": { "dependsOn": ["^build"] },
     "test": { "dependsOn": ["^build"], "outputs": ["coverage/**"] },
+    "@identity/api#test": { "dependsOn": ["^build", "build"], "outputs": ["coverage/**"] },
     "test:integration": { "dependsOn": ["^build"], "cache": false },
     "dev": { "cache": false, "persistent": true }
   },

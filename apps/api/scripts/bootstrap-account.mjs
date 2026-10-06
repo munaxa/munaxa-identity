@@ -22,12 +22,16 @@
  *
  *   DIRECT_DATABASE_URL=… IDENTITY_OWNER_EMAIL=… IDENTITY_OWNER_PASSWORD=… \
  *     node apps/api/scripts/bootstrap-account.mjs --organisation acme [--role work-staging-operator]
+ *
+ * The connection — the owner credential and its verified TLS (`DATABASE_TLS_CA` against RDS) — is
+ * the migration runner's, through `owner-connection.mjs`; see `docs/runbooks/migrations.md`.
  */
 import { randomUUID } from 'node:crypto';
 
 import { PasswordPolicyService, StaticBreachRegistry } from '@munaxa/auth';
 import { defaultPasswordHasher } from '@munaxa/crypto';
-import pg from 'pg';
+
+import { describeOwnerDatabase, ownerDatabase } from './owner-connection.mjs';
 
 const argument = (name) => {
   const index = process.argv.indexOf(`--${name}`);
@@ -53,19 +57,15 @@ const withTenant = async (client, tenantId, work) => {
 };
 
 const run = async () => {
-  const connection = process.env.DIRECT_DATABASE_URL ?? process.env.TEST_DIRECT_DATABASE_URL;
+  // First, so a missing owner credential or an unverifiable TLS configuration stops the script
+  // before anything else happens. It does not connect yet.
+  const database = await ownerDatabase('munaxa-identity-bootstrap');
   const email = (process.env.IDENTITY_OWNER_EMAIL ?? '').trim();
   const password = process.env.IDENTITY_OWNER_PASSWORD ?? '';
   const slug = (argument('organisation') ?? process.env.IDENTITY_DEFAULT_ORGANISATION ?? '').trim();
   const organisationName = argument('organisation-name') ?? slug;
   const roleKey = argument('role');
 
-  if (!connection) {
-    fail(
-      'Set DIRECT_DATABASE_URL to a migrated Identity database, as the migration owner. Provisioning ' +
-        'an organisation is not something the application role may do, and this script does not ask it to.',
-    );
-  }
   if (email === '') fail('Set IDENTITY_OWNER_EMAIL.');
   if (password === '')
     fail('Set IDENTITY_OWNER_PASSWORD. It is never echoed and never stored in plaintext.');
@@ -84,7 +84,8 @@ const run = async () => {
     );
   }
 
-  const pool = new pg.Pool({ connectionString: connection, max: 1 });
+  process.stdout.write(describeOwnerDatabase(database.describe));
+  const pool = database.openPool();
   const client = await pool.connect();
 
   try {
