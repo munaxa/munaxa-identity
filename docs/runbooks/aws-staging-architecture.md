@@ -57,6 +57,7 @@ VPC munaxa-shared-nonprod 10.130.0.0/16  (§3.8; clear of Docs' 10.120/16 and 10
 
 Decision (§3): Option B — private tasks + VPC endpoints, no NAT gateway, no internet egress.
 
+Account: munaxa-nonprod (dedicated member account, §8) — not the Organizations management account.
 ECS cluster munaxa-shared-nonprod: one service per deployable, one task each.
 GitHub ─OIDC─▶ per-product publisher role ─▶ ECR munaxa-<product>-<component> ─digest─▶ ECS
 ```
@@ -70,27 +71,27 @@ environments). That is ADR-0002 §10 applied to one environment.
 
 ## 2. Shared vs isolated resources
 
-| Resource                        | Shared or per product                                           | Scope                                   | Ongoing cost                                                 | Cheapest form acceptable for semi-production? | In production                                                     |
-| ------------------------------- | --------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------ | --------------------------------------------- | ----------------------------------------------------------------- |
-| AWS account                     | Shared by all products' non-production                          | Per environment                         | None                                                         | Yes                                           | Separate production account(s) (§10)                              |
-| Region                          | Shared: `eu-central-1` (Docs ADR-0023)                          | All                                     | None                                                         | Yes                                           | Same, plus a DR region (open in Docs)                             |
-| VPC                             | **Shared**                                                      | Per environment                         | None by itself                                               | Yes                                           | Per environment; per product only if a customer demands it        |
-| Subnets / AZs                   | Shared; 2 AZs (the ALB requires two)                            | Per environment                         | None                                                         | Yes                                           | 2–3 AZs, tasks spread across them                                 |
-| ALB                             | **Shared**, host + path routing                                 | Per environment                         | **Hourly** $19.71 + 2 public IPv4 $7.30 + LCU usage          | Yes                                           | Shared or per product; WAF added                                  |
-| Route 53                        | Shared sub-zone `nonprod.munaxa.com`                            | Per environment                         | $0.50/zone                                                   | Yes                                           | `munaxa.com` zone (ADR-0002: one zone, one subdomain per product) |
-| ACM                             | Shared wildcard `*.nonprod.munaxa.com`                          | Per environment                         | None                                                         | Yes                                           | Per-product certificates for `<product>.munaxa.com`               |
-| ECS cluster                     | **Shared**                                                      | Per environment                         | None                                                         | Yes                                           | Shared is still fine (ADR-0002 §10: compute shareable)            |
-| ECS services / task definitions | **Per deployable**                                              | Per environment                         | **Hourly** (Fargate)                                         | Yes: 1 task, smallest size, Spot              | ≥2 tasks, on-demand                                               |
-| ECR repositories                | **Per deployable**                                              | Per account (images promoted by digest) | Storage only, cents                                          | Yes                                           | Same names in the production account                              |
-| GitHub OIDC provider            | Shared                                                          | Per account                             | None                                                         | Yes                                           | Same                                                              |
-| IAM roles                       | **Per product, per component, per environment**                 | —                                       | None                                                         | Yes                                           | Same, under a production path                                     |
-| Secrets Manager                 | **Per product paths and policies**; one shared public CA bundle | Per environment                         | $0.40/secret                                                 | Yes                                           | Same; rotation added                                              |
-| CloudWatch Logs                 | **Per product log groups**, 7-day retention                     | Per environment                         | Usage, cents                                                 | Yes                                           | 30+ days, alarms                                                  |
-| VPC endpoints                   | **Shared** (4 interface + S3 gateway)                           | Per environment                         | **Hourly** $8.76 per interface endpoint per AZ; gateway free | Yes, one AZ                                   | Every AZ that runs tasks (§10)                                    |
-| NAT gateway                     | **Not used** (§3)                                               | —                                       | (would be $41.61 with its address)                           | —                                             | Only if a product needs internet egress or a fixed address        |
-| RDS PostgreSQL                  | **Per product** (Work unit: Work + Identity)                    | Per environment                         | **Hourly** ~$16.61                                           | Yes: `db.t4g.micro`, Single-AZ                | Multi-AZ, larger class, 35-day backups                            |
-| Redis / Valkey                  | **Per product, only where required** (Identity)                 | Per environment                         | **Hourly** $10.51 (Valkey `cache.t4g.micro`) or $0 sidecar   | Yes: one node, no replica                     | Managed, with a replica                                           |
-| Cloud Map namespace             | Shared                                                          | Per environment                         | ~$0.50 hosted zone + $0.10 per registered instance           | Yes                                           | Same                                                              |
+| Resource                        | Shared or per product                                                            | Scope                                                    | Ongoing cost                                                 | Cheapest form acceptable for semi-production? | In production                                                           |
+| ------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------- | ----------------------------------------------------------------------- |
+| AWS account                     | **`munaxa-nonprod` member account**, shared by all products' non-production (§8) | Per environment                                          | $0                                                           | Yes                                           | Separate production member account, never the management account (§8.5) |
+| Region                          | Shared: `eu-central-1` (Docs ADR-0023)                                           | All                                                      | None                                                         | Yes                                           | Same, plus a DR region (open in Docs)                                   |
+| VPC                             | **Shared**                                                                       | Per environment                                          | None by itself                                               | Yes                                           | Per environment; per product only if a customer demands it              |
+| Subnets / AZs                   | Shared; 2 AZs (the ALB requires two)                                             | Per environment                                          | None                                                         | Yes                                           | 2–3 AZs, tasks spread across them                                       |
+| ALB                             | **Shared**, host + path routing                                                  | Per environment                                          | **Hourly** $19.71 + 2 public IPv4 $7.30 + LCU usage          | Yes                                           | Shared or per product; WAF added                                        |
+| Route 53                        | Shared sub-zone `nonprod.munaxa.com`                                             | Per environment                                          | $0.50/zone                                                   | Yes                                           | `munaxa.com` zone (ADR-0002: one zone, one subdomain per product)       |
+| ACM                             | Shared wildcard `*.nonprod.munaxa.com`                                           | Per environment                                          | None                                                         | Yes                                           | Per-product certificates for `<product>.munaxa.com`                     |
+| ECS cluster                     | **Shared**                                                                       | Per environment                                          | None                                                         | Yes                                           | Shared is still fine (ADR-0002 §10: compute shareable)                  |
+| ECS services / task definitions | **Per deployable**                                                               | Per environment                                          | **Hourly** (Fargate)                                         | Yes: 1 task, smallest size, Spot              | ≥2 tasks, on-demand                                                     |
+| ECR repositories                | **Per deployable**                                                               | Per account (images promoted by digest)                  | Storage only, cents                                          | Yes                                           | Same names in the production account                                    |
+| GitHub OIDC provider            | Shared within the account                                                        | Per account (one in `munaxa-nonprod`, one in production) | $0                                                           | Yes                                           | Same, trusting `aws-eu-prod` only                                       |
+| IAM roles                       | **Per product, per component, per environment**                                  | —                                                        | None                                                         | Yes                                           | Same, under a production path                                           |
+| Secrets Manager                 | **Per product paths and policies**; one shared public CA bundle                  | Per environment                                          | $0.40/secret                                                 | Yes                                           | Same; rotation added                                                    |
+| CloudWatch Logs                 | **Per product log groups**, 7-day retention                                      | Per environment                                          | Usage, cents                                                 | Yes                                           | 30+ days, alarms                                                        |
+| VPC endpoints                   | **Shared** (4 interface + S3 gateway)                                            | Per environment                                          | **Hourly** $8.76 per interface endpoint per AZ; gateway free | Yes, one AZ                                   | Every AZ that runs tasks (§10)                                          |
+| NAT gateway                     | **Not used** (§3)                                                                | —                                                        | (would be $41.61 with its address)                           | —                                             | Only if a product needs internet egress or a fixed address              |
+| RDS PostgreSQL                  | **Per product** (Work unit: Work + Identity)                                     | Per environment                                          | **Hourly** ~$16.61                                           | Yes: `db.t4g.micro`, Single-AZ                | Multi-AZ, larger class, 35-day backups                                  |
+| Redis / Valkey                  | **Per product, only where required** (Identity)                                  | Per environment                                          | **Hourly** $10.51 (Valkey `cache.t4g.micro`) or $0 sidecar   | Yes: one node, no replica                     | Managed, with a replica                                                 |
+| Cloud Map namespace             | Shared                                                                           | Per environment                                          | ~$0.50 hosted zone + $0.10 per registered instance           | Yes                                           | Same                                                                    |
 
 ---
 
@@ -413,10 +414,234 @@ $0 — acceptable for one task, but a restart resets lockout counters.
 
 ---
 
-## 8. Secrets and IAM model
+## 8. Accounts, secrets and IAM model
 
-**Secrets Manager** — one JSON secret per _consumer_, so an execution role can read only what its task
-uses. Never a shared signing key or shared credential (ADR-0002 §10).
+**Decision (2026-10-06, resolves former open decision #2): one dedicated non-production member
+account, `munaxa-nonprod`, holds the whole shared non-production environment of §1 for every
+product.** Workloads are not added to the Organizations management account. Production for
+Identity and Work goes into a separate production member account, created when the first production
+resource for them is built, never into the management account or `munaxa-nonprod`. No account per
+product: ADR-0002 binding decision 10 lists "provider accounts" among the infrastructure products
+share, and per-product isolation stays inside the account (§2, §3.9, §8.5).
+
+### 8.1 Evidence
+
+- Docs Production and Docs Non-Production both live in account `800728620253`, **the Organizations
+  management account** (Docs `infra/terraform/README.md`). Applied there so far: the production
+  bootstrap, `eu-prod/core` IAM roles, the production VPC and `eu-prod/data` (RDS, KMS, S3, Backup);
+  `eu-prod/service` is not applied and Docs production is NOT READY. Docs Non-Production was created
+  outside Terraform.
+- That README records the consequence: _"The account is the AWS Organizations management account, so
+  service control policies do not apply to it. Isolation is enforced entirely in IAM"_. It also
+  records that _"Both administrator users keep AdministratorAccess and can bypass all of this."_
+- AWS: _"SCPs don't affect users or roles in the management account"_, and _"Avoid deploying
+  workloads to the organization's management account … SCPs do not apply to the management account"_
+  (Organizations user guide, SCPs; best practices for the management account).
+- Docs ADR-0022 requires that _"the AWS region and account structure are decided before any resource
+  is provisioned"_. Docs ADR-0024 lists _"A separate production AWS account and its administrators"_
+  as still open. The ecosystem ADRs set no account convention beyond decision 10.
+
+### 8.2 Options compared
+
+|                           | A. Keep non-production in the management account                                                         | **B. Dedicated non-production member account (selected)**                                       |
+| ------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| AWS charges               | Baseline                                                                                                 | **Same**: Organizations and accounts are free (§8.3)                                            |
+| Account-level isolation   | None. Non-production shares an account with Docs production and the organization's own controls          | **Full.** Separate IAM, quotas, Secrets Manager, KMS, CloudTrail, VPCs                          |
+| Production safety         | IAM deny lists by name and tag only; any administrator bypasses them; SCPs cannot apply                  | **No principal in it holds any permission in production**; SCPs apply to it                     |
+| IAM complexity            | Every non-production role needs the Docs-style deny lists so it cannot touch production, and the reverse | Roles need only product scoping; the environment boundary is the account                        |
+| GitHub OIDC / ECR         | One OIDC provider; every trust policy must also keep environments apart                                  | One provider per account; a non-production token has nowhere in production to land (§8.4)       |
+| Secrets Manager           | Production and non-production secrets in one namespace, separated by path and IAM                        | Separate by account; no cross-account policies                                                  |
+| Route 53 / ACM            | Works                                                                                                    | Works; delegation by NS records (§8.6)                                                          |
+| VPC / networking          | The shared VPC beside two Docs VPCs; the Docs deployer's deny list must keep covering it                 | The shared VPC alone; `10.130.0.0/16` stays clear of Docs' ranges for any future peering        |
+| CloudWatch                | Logs and alarms of both environments in one account                                                      | Per account; cross-account viewing optional and not needed now                                  |
+| Cross-account complexity  | None                                                                                                     | One deliberate path, production reading images (§8.4); everything else is inside one account    |
+| Billing / accountability  | Needs cost-allocation tags, which are not retroactive                                                    | **Per-account cost in Cost Explorer from day one**, with or without tags; a budget per account  |
+| Future products           | Each adds more deny-list maintenance in a privileged account                                             | Each adds roles and services inside `munaxa-nonprod`; no new account                            |
+| Future production         | Production in the management account forever, or a migration later                                       | Production account created once, for all products, when needed                                  |
+| Operations, small company | One sign-in                                                                                              | One more account to sign in to (IAM Identity Center or the organization access role, both free) |
+
+**Rejected: A.** It costs the same AWS bill and gives a weaker boundary. Every non-production
+deploy, run several times a day from CI, would execute in the account that also holds production
+Docs data and the organization's billing and policy powers, protected only by deny lists that any
+administrator bypasses. AWS's own guidance is to keep workloads out of that account.
+
+**Also rejected:**
+
+- **An account per product (or per product and environment).** Eight or more accounts, and the
+  shared VPC and ALB would need AWS RAM subnet sharing and cross-account target registration. It
+  contradicts ADR-0002 decision 10 and buys nothing that per-product IAM, security groups and
+  databases (§3.9) do not already give.
+- **Non-production stays in the management account and production moves out.** It protects
+  production equally well. But it leaves the most-changed, least-reviewed workload in the one
+  account no SCP can constrain, and it still requires a production account. It is B without B's
+  benefit to the management account.
+
+### 8.3 Cost implications
+
+| Item                                                 | Charge                                                                 | Caused by B?                    |
+| ---------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------- |
+| AWS Organizations, creating the member account       | **$0** (_"offered at no additional charge"_, Organizations user guide) | —                               |
+| IAM roles, OIDC provider, SCPs, IAM Identity Center  | $0                                                                     | —                               |
+| CloudTrail, first copy of management events to S3    | $0 (AWS CloudTrail pricing); S3 storage cents                          | Only the storage, cents         |
+| Terraform state bucket                               | S3 cents; SSE-S3 free (a customer-managed KMS key would add $1/month)  | Cents                           |
+| VPC, ALB, endpoints, ECS, RDS, Valkey, secrets, zone | §9                                                                     | **No**: built once either way   |
+| Shared ECR images, later copied to production        | $0.10 per GB-month in the production account                           | Cents, and only with production |
+
+**Net additional AWS cost of B: about $0 a month.** The non-production environment does not exist
+yet, so nothing is duplicated. What B adds is organizational: one account to create and secure, its
+root user, and one more sign-in. Consolidated billing still produces one bill, paid by the
+management account.
+
+### 8.4 IAM, GitHub OIDC and ECR in `munaxa-nonprod`
+
+The account boundary separates environments. IAM inside the account separates products.
+
+| Element                                     | In `munaxa-nonprod`                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub OIDC provider                        | One, `token.actions.githubusercontent.com`, audience `sts.amazonaws.com`. It trusts no repository by itself; each role's trust policy does                                                                                                                                                                                                                                            |
+| GitHub environment                          | `aws-nonprod` in each product repository. Its variables (`AWS_REGION`, `AWS_ROLE_ARN`, `ECR_REPOSITORY`) name roles and repositories in `munaxa-nonprod` only                                                                                                                                                                                                                         |
+| Trust policy, every GitHub role             | `StringEquals` on `aud` = `sts.amazonaws.com` **and** `sub` = `repo:munaxa/munaxa-<product>:environment:aws-nonprod`. Exact match, no wildcard, one repository per role                                                                                                                                                                                                               |
+| `munaxa-<product>-nonprod-github-publisher` | Push to `repository/munaxa-<product>-*` only                                                                                                                                                                                                                                                                                                                                          |
+| `munaxa-<product>-nonprod-github-deployer`  | Register task definitions; update **that product's** services (`service/munaxa-shared-nonprod/munaxa-<product>-nonprod-*`); run its one-off tasks; `iam:PassRole` **only** for roles under `/munaxa-<product>/nonprod/`. Task-definition registration is not resource-scoped in ECS, so PassRole is the boundary: a product cannot start anything that runs as another product's role |
+| ECR repositories                            | `munaxa-<product>-<component>` in `munaxa-nonprod`, the source of every image. Immutable tags, digests                                                                                                                                                                                                                                                                                |
+| ECS execution roles                         | Per component: pull its own repositories (conditioned on `aws:sourceVpce`, §3.7), read `munaxa-<product>-nonprod/<consumer>` only, write its own log group                                                                                                                                                                                                                            |
+| ECS task roles                              | Per component; Identity and Work: no permissions                                                                                                                                                                                                                                                                                                                                      |
+| Shared infrastructure                       | `munaxa-shared-nonprod-infra`, the only role that changes the VPC, ALB and listener rules, endpoints, cluster and namespace. Used by whoever applies the shared stack (§12 #1 decides where it lives); no product role holds these permissions                                                                                                                                        |
+| Permissions boundary                        | Every role under a product path carries `munaxa-<product>-nonprod-boundary` (Docs pattern), so a mistaken broad allow still cannot reach another product's paths                                                                                                                                                                                                                      |
+
+So Work's deployer cannot change Identity's service, pass Identity's roles, read Identity's
+secrets or push to Identity's repositories, and the reverse holds too. That remains true when Docs and School join.
+
+**Production (future).** The production account has its own OIDC provider and its own roles. They
+trust only `sub` = `repo:munaxa/munaxa-<product>:environment:aws-eu-prod`. The production ECR
+repositories have the same names. **Promotion copies the same digest**: a job in the `aws-eu-prod`
+environment pulls by digest from `munaxa-nonprod` and pushes to the production repository. The
+manifest is unchanged (single-platform, no provenance attestation, §6), so the digest is identical.
+The only cross-account permission is a repository policy in `munaxa-nonprod` that lets the
+production account pull. Non-production never gets any permission in production. Production does
+not run images from `munaxa-nonprod` directly, so production never depends on the non-production
+account's availability or its administrators.
+
+**Identity's existing artifacts.** `ecr-image.md` already takes the role ARN, region and repository
+from GitHub environment variables, so the account choice changes no code or workflow. The role, the
+repository and the OIDC provider are created in `munaxa-nonprod`, under the names already flagged
+for alignment (§11, §12 #10).
+
+### 8.5 Production separation strategy
+
+An accidental non-production deployment cannot modify production, because every layer would have to
+fail at once:
+
+1. **Account boundary.** Non-production credentials are minted by `munaxa-nonprod`'s STS for
+   `munaxa-nonprod`'s roles. No production role trusts `munaxa-nonprod`, and none trusts the
+   `aws-nonprod` subject. There is no path for a non-production token to become a production one.
+2. **OIDC subject pinning.** Every role names one repository and one GitHub environment exactly.
+   A workflow run in `aws-nonprod` receives a token whose `sub` no production role accepts, even if
+   someone pastes a production role ARN into it.
+3. **GitHub environment protection.** `aws-eu-prod` requires reviewers and allows only protected
+   tags or `main`. `aws-nonprod` allows only the designated branches and tags. Variables are per
+   environment, so a non-production job is never even given a production ARN.
+4. **Infrastructure code pins the account.** Each Terraform root (or equivalent) declares its one
+   allowed account ID, as Docs' bootstrap does today (_"The provider refuses to run against any
+   other"_), so a misconfigured profile fails before planning.
+5. **SCPs on member accounts (free).** On the non-production account now:
+   - only `eu-central-1`, apart from global services;
+   - no IAM users or access keys (OIDC and roles only);
+   - no `LeaveOrganization` or `CloseAccount`;
+   - no stopping or deleting CloudTrail;
+   - cost guardrails such as no NAT gateways (§3), no EC2 instances, and RDS and ElastiCache
+     classes limited to the micro and small families.
+
+   On the production account later: the same, without the cost caps. SCPs need the organization to
+   have **all features** enabled. Verify that before relying on them.
+
+6. **Names and tags are kept.** `nonprod` and `Environment=NonProduction` stay on every resource.
+   That is defence in depth, and the Docs production deployer's deny lists keep working while Docs
+   is still in the management account.
+7. **The management account holds no new workloads.** Human access to member accounts goes through
+   IAM Identity Center or the `OrganizationAccountAccessRole` that Organizations creates. That role
+   has administrator rights and trusts the management account, so only the management account's
+   administrators may assume it.
+
+### 8.6 Route 53 and ACM
+
+The account structure creates **no DNS issue**:
+
+- `nonprod.munaxa.com` is a hosted zone **in `munaxa-nonprod`** ($0.50, already in §9).
+  `work.nonprod.munaxa.com` and the other product names are alias records there, pointing at the
+  shared ALB in the same account.
+- **Delegation** is four NS records for `nonprod` in the parent `munaxa.com` zone. That works
+  whatever hosts the parent: Route 53 in another account, or an external DNS provider. Where
+  `munaxa.com` is hosted is not recorded in any repository and stays open decision #6.
+- **ACM:** `*.nonprod.munaxa.com` is requested in `munaxa-nonprod` (`eu-central-1`, where the ALB
+  is) and DNS-validated by a CNAME in the delegated zone. It is self-contained; public certificates
+  are free.
+- **Production names** (`work.munaxa.com` …) live in the parent zone or a production zone that
+  `munaxa-nonprod` has no permission on, so a non-production deploy cannot change production DNS.
+
+**Consideration for decision #6, not an account issue.** `*.nonprod.munaxa.com` and
+`*.munaxa.com` are the same _site_ (`munaxa.com`). Browsers therefore send `SameSite=Lax` cookies
+between the two environments. Also, a compromised non-production host could set a
+`Domain=munaxa.com` cookie that production receives. Identity's session cookie is `__Host-` and
+cannot be overwritten this way. Its refresh cookie, `__Secure-mx_refresh`, is host-only in fact
+but not by prefix (`apps/api/src/auth/cookies.ts`). A separate registrable domain for
+non-production would remove the shared site. Decision #6 should weigh that against the cost of one
+domain registration.
+
+### 8.7 Existing Docs Non-Production
+
+Nothing moves now. Docs' resources stay where they are until Docs joins this environment, and that
+is a Docs owner decision (§12 #8).
+
+- **Resources cannot be moved between accounts.** Docs Non-Production is recreated in
+  `munaxa-nonprod`, inside the shared VPC and ALB, and the old VPC, NAT gateway, RDS instance and
+  ECS cluster in the management account are deleted afterwards. That ends its ~$100 a month (§9).
+  It was built outside Terraform, so recreating it as code is also an improvement.
+- **Test data**, if it is worth keeping: an RDS snapshot encrypted with the account's _default_ KMS
+  key cannot be shared with another account (RDS user guide, "Sharing encrypted snapshots"). Copy it
+  with a customer-managed key shared with `munaxa-nonprod` first, then copy it again in the target.
+  Otherwise start empty.
+- **The Docs production deployer's deny lists** for `*nonprod*` and the Non-Production VPC ID stay
+  harmless after the move; Docs removes them at its convenience.
+- **Docs production** remains in the management account. Moving it to the production account
+  (Docs ADR-0024 open item 2) is a Docs decision, outside this one. It is cheapest before go-live,
+  while it holds no customer data: today only bootstrap, IAM, the VPC and the data stack are applied, and the service is not.
+
+### 8.8 Future account structure
+
+```text
+AWS Organization (all features enabled; SCPs)
+│
+├── Management account 800728620253 — Organizations, billing, IAM Identity Center, org CloudTrail
+│     today also: Docs production and Docs Non-Production (Docs' own decisions, §8.7)
+│
+├── OU NonProduction ── SCP: region lock, no IAM users/keys, cost guardrails
+│   └── munaxa-nonprod          ← this document; created first
+│       shared: VPC munaxa-shared-nonprod, ALB, endpoints, cluster, nonprod.munaxa.com, OIDC provider
+│       ├── Identity   roles, secrets, Valkey, database `identity`   ┐ one RDS instance
+│       ├── Work       roles, secrets, database `work`               ┘ (Work unit, §7)
+│       ├── Docs       (on joining) roles, secrets, its own RDS
+│       └── School     (on joining) roles, secrets, its own RDS
+│
+└── OU Production ── SCP: region lock, no IAM users/keys, CloudTrail protected
+    └── munaxa-prod             ← created when the first Identity/Work production resource is built
+        ├── Identity, Work      (and Docs, School when their owners decide)
+        └── ECR copies of the promoted digests; own OIDC provider trusting `aws-eu-prod` only
+```
+
+### 8.9 ADR
+
+This decision changes how every product is hosted, so it belongs in an **ecosystem ADR in
+`munaxa/munaxa`** before any account is created. It can be one ADR together with the registry
+decision (§12 #1). It also answers the account-structure precondition of Docs ADR-0022. No ADR is
+created here: ecosystem ADRs live in `munaxa/munaxa`, which is out of scope, and accepted ADRs are
+superseded rather than edited.
+
+### 8.10 Secrets Manager
+
+One JSON secret per _consumer_, so an execution role can read only what its task uses. There is
+never a shared signing key or shared credential (ADR-0002 §10). Secrets live in the account of their
+environment, so production and non-production secrets never share a namespace or a key.
 
 | Secret                         | Read by                        | Keys                                                                                   |
 | ------------------------------ | ------------------------------ | -------------------------------------------------------------------------------------- |
@@ -430,7 +655,10 @@ uses. Never a shared signing key or shared credential (ADR-0002 §10).
 Non-secret configuration (issuer, audience, public keys, hostnames) goes in the task definition's
 environment, not in Secrets Manager.
 
-**IAM**, all under a product path, all with a permissions boundary (Docs pattern):
+### 8.11 IAM roles
+
+All roles sit under a product path and carry a permissions boundary (Docs pattern). The GitHub
+roles are detailed in §8.4.
 
 | Role                                             | Trusted by                          | May                                                                                 |
 | ------------------------------------------------ | ----------------------------------- | ----------------------------------------------------------------------------------- |
@@ -438,13 +666,8 @@ environment, not in Secrets Manager.
 | `munaxa-<product>-nonprod-<component>-task`      | `ecs-tasks`                         | only what the application calls (Identity and Work: nothing)                        |
 | `munaxa-<product>-nonprod-ops-execution`         | `ecs-tasks`                         | the ops secret, the ops log group                                                   |
 | `munaxa-<product>-nonprod-github-publisher`      | GitHub OIDC, one repo + environment | push to that product's repositories                                                 |
-| infrastructure deployer                          | humans/CI applying infrastructure   | names and tags of this environment only                                             |
-
-**Same-account caution:** Docs production and Docs Non-Production are both in account
-`800728620253`, the Organizations management account, separated by IAM guardrails that deny anything
-**named `*nonprod*` or tagged `NonProduction`** to the Docs production deployer. Every shared staging
-resource must carry the `nonprod` token and `Environment=NonProduction` if it lives in that account
-— or, better, live in its own account (§12).
+| `munaxa-<product>-nonprod-github-deployer`       | GitHub OIDC, one repo + environment | deploy that product's services and one-off tasks                                    |
+| `munaxa-shared-nonprod-infra`                    | the shared-infrastructure pipeline  | the shared VPC, ALB, endpoints, cluster and namespace only                          |
 
 ---
 
@@ -484,7 +707,7 @@ design, or shrinking it, is the largest single saving available — a Docs owner
 
 | Area    | Staging (this design)                                                      | Production                                                                                                                                                         |
 | ------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Account | Non-production account                                                     | Separate production account(s), outside the management account                                                                                                     |
+| Account | `munaxa-nonprod` member account                                            | Production member account (`munaxa-prod`), never the management account; images copied by digest (§8.4)                                                            |
 | AZs     | 2 (ALB minimum), endpoints in 1                                            | 2–3, everything spread                                                                                                                                             |
 | Tasks   | 1 per service, Spot                                                        | ≥2 per service, on-demand, rolling deploys                                                                                                                         |
 | Egress  | Option B: private tasks, 4 interface endpoints in 1 AZ, no internet egress | Same shape, endpoints in every AZ that runs tasks (4 × 2 AZs = $70.08); still no internet egress for Identity and Work. A NAT only for a product that needs egress |
@@ -525,6 +748,8 @@ Derived from what exists (Docs: `munaxa-docs-eu-prod-*`, `/munaxa-docs/eu-prod/`
 | IAM roles                    | path `/munaxa-<product>/<env>/`, name `munaxa-<product>-<env>-<component>-<execution\|task>` | `munaxa-work-nonprod-admin-execution`                               |
 | GitHub publisher role        | `munaxa-<product>-<env>-github-publisher`                                                    | `munaxa-identity-nonprod-github-publisher`                          |
 | GitHub environment           | `aws-<env>`                                                                                  | `aws-nonprod`, `aws-eu-prod`                                        |
+| AWS account                  | `munaxa-<env-class>`, one per environment class, never per product                           | `munaxa-nonprod`, `munaxa-prod`                                     |
+| Organizational unit          | `NonProduction`, `Production`                                                                | `NonProduction` holds `munaxa-nonprod`                              |
 | Cloud Map namespace          | `<env>.munaxa.internal`                                                                      | `nonprod.munaxa.internal`                                           |
 | DNS                          | `<product>.nonprod.munaxa.com` / `<product>.munaxa.com`                                      | `work.nonprod.munaxa.com`                                           |
 | Tags                         | `Project=Munaxa<Product>`, `Environment=NonProduction\|Production`, `ManagedBy`, `Stack`     | `Project=MunaxaIdentity`                                            |
@@ -538,19 +763,20 @@ repository `munaxa/identity-api` and GitHub environment `aws-staging`. Under thi
 
 ## 12. Open decisions and blockers
 
-| #   | Decision                                                                                                                                                   | Recommendation                                                                                                   |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| 1   | **Registry:** ADR-0002 §10/D6 names GHCR; AWS deployment uses ECR                                                                                          | Supersede with an ecosystem ADR: ECR for AWS environments, GHCR kept for distribution                            |
-| 2   | **Account:** staging in the Organizations management account (where Docs prod and Non-Production are) or a new member account                              | New member account for non-production (free); keeps staging out of the Docs production deployer's reach entirely |
-| 3   | ~~**Network:** A, B or C~~ — **resolved 2026-10-06: Option B** (private tasks + 4 interface endpoints in one AZ, no NAT, no internet egress; $35.04/month) | Done (§3). C ($10.95) and A ($41.61) rejected in §3.10                                                           |
-| 4   | **Identity database server:** shared with Work (separate databases) or its own instance (+~$16.61)                                                         | Shared for staging; revisit for production                                                                       |
-| 5   | **Identity Redis:** ElastiCache Valkey (~$10.5) or loopback sidecar ($0)                                                                                   | Valkey: survives task restarts and is the production shape                                                       |
-| 6   | **DNS:** where `munaxa.com` is hosted, and delegating `nonprod.munaxa.com`                                                                                 | Delegate the sub-zone to Route 53                                                                                |
-| 7   | **Fargate Spot** for staging                                                                                                                               | Yes                                                                                                              |
-| 8   | **Docs Non-Production** (~$100 a month idle)                                                                                                               | Docs owner: shrink, or move into this design                                                                     |
-| 9   | School: build-time `NEXT_PUBLIC_API_URL`, static S3 keys, `app.`/`admin.munaxa.com` hostnames (ADR-0002 R2)                                                | Fix before School joins (§6)                                                                                     |
-| 10  | Naming alignment of the Identity artifacts (§11)                                                                                                           | Rename before the first AWS publish                                                                              |
-| 11  | ADR-0002 §7 says Identity signs RS256; Identity uses ES256                                                                                                 | Correct in the superseding ADR (#1)                                                                              |
+| #   | Decision                                                                                                                                                                                                  | Recommendation                                                                            |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 1   | **Registry:** ADR-0002 §10/D6 names GHCR; AWS deployment uses ECR                                                                                                                                         | Supersede with an ecosystem ADR: ECR for AWS environments, GHCR kept for distribution     |
+| 2   | ~~**Account:** management account or a member account~~ — **resolved 2026-10-06: dedicated member account `munaxa-nonprod`** for all products' non-production; production later in its own member account | Done (§8). Needs an ecosystem ADR in `munaxa/munaxa` before the account is created (§8.9) |
+| 3   | ~~**Network:** A, B or C~~ — **resolved 2026-10-06: Option B** (private tasks + 4 interface endpoints in one AZ, no NAT, no internet egress; $35.04/month)                                                | Done (§3). C ($10.95) and A ($41.61) rejected in §3.10                                    |
+| 4   | **Identity database server:** shared with Work (separate databases) or its own instance (+~$16.61)                                                                                                        | Shared for staging; revisit for production                                                |
+| 5   | **Identity Redis:** ElastiCache Valkey (~$10.5) or loopback sidecar ($0)                                                                                                                                  | Valkey: survives task restarts and is the production shape                                |
+| 6   | **DNS:** where `munaxa.com` is hosted, and delegating `nonprod.munaxa.com`                                                                                                                                | Delegate the sub-zone to Route 53                                                         |
+| 7   | **Fargate Spot** for staging                                                                                                                                                                              | Yes                                                                                       |
+| 8   | **Docs Non-Production** (~$100 a month idle)                                                                                                                                                              | Docs owner: shrink, or move into this design                                              |
+| 9   | School: build-time `NEXT_PUBLIC_API_URL`, static S3 keys, `app.`/`admin.munaxa.com` hostnames (ADR-0002 R2)                                                                                               | Fix before School joins (§6)                                                              |
+| 10  | Naming alignment of the Identity artifacts (§11)                                                                                                                                                          | Rename before the first AWS publish                                                       |
+| 11  | ADR-0002 §7 says Identity signs RS256; Identity uses ES256                                                                                                                                                | Correct in the superseding ADR (#1)                                                       |
 
 **Blockers for building this, outside this document:** Work's own AWS blockers from its readiness audit
-(migration path, `work_app` grants, RDS TLS, bootstrap from the image), and decisions 1, 2 and 6.
+(migration path, `work_app` grants, RDS TLS, bootstrap from the image); decisions 1 and 6; and, for
+decision 2, the ecosystem ADR and the creation of `munaxa-nonprod` with its baseline SCPs (§8.5, §8.9).
