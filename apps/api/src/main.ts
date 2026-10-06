@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import { loadEnvironment } from '@identity/config';
 
 import { AppModule } from './app.module.js';
+import { trustLoadBalancer } from './security/proxy-trust.js';
 
 /**
  * Startup.
@@ -16,6 +17,9 @@ const bootstrap = async (): Promise<void> => {
   const environment = loadEnvironment();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: true });
 
+  // Before anything reads `request.ip`: the rate limiter, the session and the audit trail all key on
+  // the client, and behind the load balancer the socket's peer is the load balancer.
+  trustLoadBalancer(app);
   app.use(cookieParser());
   // The sign-in page is a plain HTML form, so the service parses form encoding as well as JSON.
   // Without this a browser's post arrives with an empty body and every sign-in fails as though the
