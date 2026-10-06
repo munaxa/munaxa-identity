@@ -32,16 +32,16 @@ _estimate_.
 ## 1. Architecture overview
 
 ```text
-                               Route 53: nonprod.munaxa.com (delegated sub-zone)
-                               ACM: *.nonprod.munaxa.com (one certificate)
+                               Route 53: munaxa-nonprod.com (own domain, own zone, §4)
+                               ACM: *.munaxa-nonprod.com (one certificate)
                                               │
 Internet ──443──▶ ┌──────────────── munaxa-shared-nonprod-alb (one ALB, 2 AZs) ────────────────┐
-                  │ host work.nonprod.munaxa.com                                               │
+                  │ host work.munaxa-nonprod.com                                               │
                   │   /api/auth/*  ─▶ tg identity-api   :4001                                  │
                   │   /api/v1/*    ─▶ tg work-api       :3000   (optional; no browser caller)   │
                   │   /*           ─▶ tg work-admin     :3001                                  │
-                  │ host docs.nonprod.munaxa.com    (extension point, §4)                     │
-                  │ host school.nonprod.munaxa.com  (extension point, §4)                     │
+                  │ host docs.munaxa-nonprod.com    (extension point, §4.8)                   │
+                  │ host school.munaxa-nonprod.com  (extension point, §4.8)                   │
                   └────────────────────────────────────────────────────────────────────────────┘
 VPC munaxa-shared-nonprod 10.130.0.0/16  (§3.8; clear of Docs' 10.120/16 and 10.121/16)
  ├─ public subnets  (a, b)  ALB only                          route: internet gateway
@@ -56,6 +56,7 @@ VPC munaxa-shared-nonprod 10.130.0.0/16  (§3.8; clear of Docs' 10.120/16 and 10
                            + s3 (gateway, free); endpoint policies: this account only (§3.7)
 
 Decision (§3): Option B — private tasks + VPC endpoints, no NAT gateway, no internet egress.
+Decision (§4): non-production on its own domain munaxa-nonprod.com; production stays on munaxa.com.
 
 Account: munaxa-nonprod (dedicated member account, §8) — not the Organizations management account.
 ECS cluster munaxa-shared-nonprod: one service per deployable, one task each.
@@ -71,27 +72,27 @@ environments). That is ADR-0002 §10 applied to one environment.
 
 ## 2. Shared vs isolated resources
 
-| Resource                        | Shared or per product                                                            | Scope                                                    | Ongoing cost                                                 | Cheapest form acceptable for semi-production? | In production                                                           |
-| ------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------- | ----------------------------------------------------------------------- |
-| AWS account                     | **`munaxa-nonprod` member account**, shared by all products' non-production (§8) | Per environment                                          | $0                                                           | Yes                                           | Separate production member account, never the management account (§8.5) |
-| Region                          | Shared: `eu-central-1` (Docs ADR-0023)                                           | All                                                      | None                                                         | Yes                                           | Same, plus a DR region (open in Docs)                                   |
-| VPC                             | **Shared**                                                                       | Per environment                                          | None by itself                                               | Yes                                           | Per environment; per product only if a customer demands it              |
-| Subnets / AZs                   | Shared; 2 AZs (the ALB requires two)                                             | Per environment                                          | None                                                         | Yes                                           | 2–3 AZs, tasks spread across them                                       |
-| ALB                             | **Shared**, host + path routing                                                  | Per environment                                          | **Hourly** $19.71 + 2 public IPv4 $7.30 + LCU usage          | Yes                                           | Shared or per product; WAF added                                        |
-| Route 53                        | Shared sub-zone `nonprod.munaxa.com`                                             | Per environment                                          | $0.50/zone                                                   | Yes                                           | `munaxa.com` zone (ADR-0002: one zone, one subdomain per product)       |
-| ACM                             | Shared wildcard `*.nonprod.munaxa.com`                                           | Per environment                                          | None                                                         | Yes                                           | Per-product certificates for `<product>.munaxa.com`                     |
-| ECS cluster                     | **Shared**                                                                       | Per environment                                          | None                                                         | Yes                                           | Shared is still fine (ADR-0002 §10: compute shareable)                  |
-| ECS services / task definitions | **Per deployable**                                                               | Per environment                                          | **Hourly** (Fargate)                                         | Yes: 1 task, smallest size, Spot              | ≥2 tasks, on-demand                                                     |
-| ECR repositories                | **Per deployable**                                                               | Per account (images promoted by digest)                  | Storage only, cents                                          | Yes                                           | Same names in the production account                                    |
-| GitHub OIDC provider            | Shared within the account                                                        | Per account (one in `munaxa-nonprod`, one in production) | $0                                                           | Yes                                           | Same, trusting `aws-eu-prod` only                                       |
-| IAM roles                       | **Per product, per component, per environment**                                  | —                                                        | None                                                         | Yes                                           | Same, under a production path                                           |
-| Secrets Manager                 | **Per product paths and policies**; one shared public CA bundle                  | Per environment                                          | $0.40/secret                                                 | Yes                                           | Same; rotation added                                                    |
-| CloudWatch Logs                 | **Per product log groups**, 7-day retention                                      | Per environment                                          | Usage, cents                                                 | Yes                                           | 30+ days, alarms                                                        |
-| VPC endpoints                   | **Shared** (4 interface + S3 gateway)                                            | Per environment                                          | **Hourly** $8.76 per interface endpoint per AZ; gateway free | Yes, one AZ                                   | Every AZ that runs tasks (§10)                                          |
-| NAT gateway                     | **Not used** (§3)                                                                | —                                                        | (would be $41.61 with its address)                           | —                                             | Only if a product needs internet egress or a fixed address              |
-| RDS PostgreSQL                  | **Per product** (Work unit: Work + Identity)                                     | Per environment                                          | **Hourly** ~$16.61                                           | Yes: `db.t4g.micro`, Single-AZ                | Multi-AZ, larger class, 35-day backups                                  |
-| Redis / Valkey                  | **Per product, only where required** (Identity)                                  | Per environment                                          | **Hourly** $10.51 (Valkey `cache.t4g.micro`) or $0 sidecar   | Yes: one node, no replica                     | Managed, with a replica                                                 |
-| Cloud Map namespace             | Shared                                                                           | Per environment                                          | ~$0.50 hosted zone + $0.10 per registered instance           | Yes                                           | Same                                                                    |
+| Resource                        | Shared or per product                                                            | Scope                                                    | Ongoing cost                                                 | Cheapest form acceptable for semi-production? | In production                                                                                |
+| ------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| AWS account                     | **`munaxa-nonprod` member account**, shared by all products' non-production (§8) | Per environment                                          | $0                                                           | Yes                                           | Separate production member account, never the management account (§8.5)                      |
+| Region                          | Shared: `eu-central-1` (Docs ADR-0023)                                           | All                                                      | None                                                         | Yes                                           | Same, plus a DR region (open in Docs)                                                        |
+| VPC                             | **Shared**                                                                       | Per environment                                          | None by itself                                               | Yes                                           | Per environment; per product only if a customer demands it                                   |
+| Subnets / AZs                   | Shared; 2 AZs (the ALB requires two)                                             | Per environment                                          | None                                                         | Yes                                           | 2–3 AZs, tasks spread across them                                                            |
+| ALB                             | **Shared**, host + path routing                                                  | Per environment                                          | **Hourly** $19.71 + 2 public IPv4 $7.30 + LCU usage          | Yes                                           | Shared or per product; WAF added                                                             |
+| Route 53                        | Shared zone for the environment's own domain, `munaxa-nonprod.com` (§4)          | Per environment                                          | $0.50/zone + $16/year domain                                 | Yes                                           | `munaxa.com` on Cloudflare (ADR-0002: one zone, one subdomain per product), DNS-only records |
+| ACM                             | Shared wildcard `*.munaxa-nonprod.com`                                           | Per environment                                          | None                                                         | Yes                                           | One certificate per product hostname (§4.5)                                                  |
+| ECS cluster                     | **Shared**                                                                       | Per environment                                          | None                                                         | Yes                                           | Shared is still fine (ADR-0002 §10: compute shareable)                                       |
+| ECS services / task definitions | **Per deployable**                                                               | Per environment                                          | **Hourly** (Fargate)                                         | Yes: 1 task, smallest size, Spot              | ≥2 tasks, on-demand                                                                          |
+| ECR repositories                | **Per deployable**                                                               | Per account (images promoted by digest)                  | Storage only, cents                                          | Yes                                           | Same names in the production account                                                         |
+| GitHub OIDC provider            | Shared within the account                                                        | Per account (one in `munaxa-nonprod`, one in production) | $0                                                           | Yes                                           | Same, trusting `aws-eu-prod` only                                                            |
+| IAM roles                       | **Per product, per component, per environment**                                  | —                                                        | None                                                         | Yes                                           | Same, under a production path                                                                |
+| Secrets Manager                 | **Per product paths and policies**; one shared public CA bundle                  | Per environment                                          | $0.40/secret                                                 | Yes                                           | Same; rotation added                                                                         |
+| CloudWatch Logs                 | **Per product log groups**, 7-day retention                                      | Per environment                                          | Usage, cents                                                 | Yes                                           | 30+ days, alarms                                                                             |
+| VPC endpoints                   | **Shared** (4 interface + S3 gateway)                                            | Per environment                                          | **Hourly** $8.76 per interface endpoint per AZ; gateway free | Yes, one AZ                                   | Every AZ that runs tasks (§10)                                                               |
+| NAT gateway                     | **Not used** (§3)                                                                | —                                                        | (would be $41.61 with its address)                           | —                                             | Only if a product needs internet egress or a fixed address                                   |
+| RDS PostgreSQL                  | **Per product** (Work unit: Work + Identity)                                     | Per environment                                          | **Hourly** ~$16.61                                           | Yes: `db.t4g.micro`, Single-AZ                | Multi-AZ, larger class, 35-day backups                                                       |
+| Redis / Valkey                  | **Per product, only where required** (Identity)                                  | Per environment                                          | **Hourly** $10.51 (Valkey `cache.t4g.micro`) or $0 sidecar   | Yes: one node, no replica                     | Managed, with a replica                                                                      |
+| Cloud Map namespace             | Shared                                                                           | Per environment                                          | ~$0.50 hosted zone + $0.10 per registered instance           | Yes                                           | Same                                                                                         |
 
 ---
 
@@ -295,7 +296,228 @@ public ALB; it calls it over Cloud Map (§5), which is also what Work's `WORK_AP
 
 ---
 
-## 4. ALB and routing
+## 4. DNS, certificates, ALB and routing
+
+**Decision (2026-10-06, resolves former open decision #6): non-production uses its own registrable
+domain, `munaxa-nonprod.com`. Production stays on `munaxa.com`.** Every product keeps one hostname
+per environment, and the Work unit stays one origin split by path:
+
+| Product   | Non-production                      | Production (ADR-0002 binding decision 15) |
+| --------- | ----------------------------------- | ----------------------------------------- |
+| Work unit | `https://work.munaxa-nonprod.com`   | `https://work.munaxa.com`                 |
+| Docs      | `https://docs.munaxa-nonprod.com`   | `https://docs.munaxa.com`                 |
+| School    | `https://school.munaxa-nonprod.com` | `https://school.munaxa.com`               |
+
+`munaxa-nonprod.com` returned NXDOMAIN at the `.com` registry on 2026-10-06, so it appears
+unregistered. The exact name is the owner's to confirm at purchase. It matches the account name
+(§8), and any unrelated name works the same way, provided it is not a subdomain of `munaxa.com`.
+
+### 4.1 Evidence
+
+- **`munaxa.com` is hosted on Cloudflare DNS** (`rick.ns.cloudflare.com`, `bristol.ns.cloudflare.com`;
+  public DNS, 2026-10-06), not Route 53.
+- Production siblings already exist on it:
+  - `munaxa.com`, `www.munaxa.com`, `app.munaxa.com` and `admin.munaxa.com` are Cloudflare-proxied
+    (`app.`/`admin.` are School, ADR-0002 R2);
+  - `docs.munaxa.com` is a DNS-only CNAME to the Docs production ALB in `eu-central-1`;
+  - `work.munaxa.com` and `nonprod.munaxa.com` do not exist.
+- **Identity cookies** (`apps/api/src/auth/cookies.ts`):
+  - `__Host-mx_session`: `Path=/`, no `Domain`.
+  - `__Secure-mx_refresh`: `Path=/api/auth/refresh`, no `Domain`. It is `__Secure-` and not `__Host-`
+    because Platform's `__Host-mx_refresh` with a narrow path is dropped by browsers (measured in
+    Chromium), and `Path=/` was rejected so the refresh token never reaches Work's routes.
+  - The serializer cannot emit `Domain`.
+- **Refresh and logout** read the cookie through `cookie-parser`/`cookie@0.7.2`, which keeps the
+  **first** of several cookies with the same name (verified:
+  `parse('__Secure-mx_refresh=PLANTED; __Secure-mx_refresh=REAL')` → `PLANTED`).
+- **CSRF:** Identity's edge rejects state-changing requests whose `Origin` (or `Referer`) is not in
+  `CSRF_TRUSTED_ORIGINS`. This is an **exact string match** (`@munaxa/security` `isTrustedOrigin`),
+  and a missing `Origin` is refused. Identity ADR-0004 and the edge middleware rely on it for the
+  same-site case `SameSite=Lax` leaves open.
+- **Work** reads only `__Host-mx_session`, on the admin server, and forwards it as a bearer token;
+  the Work API authenticates by `Authorization` header, not by cookie. Work also defines an
+  unprefixed `munaxa_work_tenant` selection cookie, which nothing sets yet (`platform-session.ts`).
+- ADR-0002 binding decisions 14–15: host-only cookies are mandatory; product hostnames are
+  `docs.`/`work.`/`school.munaxa.com`; one `munaxa.com` zone. No repository records a
+  non-production domain convention.
+
+### 4.2 What a host on the same registrable domain can do
+
+Here a "sibling" is any host under the same registrable domain as `work.<domain>`. Under the old plan
+that includes every `*.nonprod.munaxa.com` host, as well as `www.`, `app.`, `admin.` and `docs.munaxa.com`.
+
+| A sibling attacker who controls `evil.munaxa.com` (HTTPS) …                                                        | Host-only cookie (no prefix)                                         | `__Secure-` cookie, no `Domain` (`__Secure-mx_refresh`)           | `__Host-` cookie (`__Host-mx_session`)                      | Cookie with `Domain=munaxa.com`                           |
+| ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------- |
+| **Read** it                                                                                                        | No                                                                   | No                                                                | No                                                          | **Yes**, it is sent to every subdomain (Munaxa sets none) |
+| **Set** a same-named cookie that `work.munaxa.com` receives (via `Domain=munaxa.com`)                              | **Yes**                                                              | **Yes** (any `Secure` cookie set from HTTPS may carry the prefix) | **No**: the browser rejects `__Host-` with a `Domain`       | Yes                                                       |
+| **Overwrite** the victim's own cookie                                                                              | No (a different cookie key), but it can **shadow** it: both are sent | No, but it can **shadow** it                                      | No                                                          | Yes                                                       |
+| **Order** its copy first                                                                                           | Yes: same `Path`, created earlier; or a longer matching `Path`       | Yes, with `Path=/api/auth/refresh` set before the victim's cookie | —                                                           | —                                                         |
+| **Evict** it by filling the browser's per-site cookie limit, or a "cookie bomb" that makes every request too large | **Yes**                                                              | **Yes**                                                           | **Yes**: prefixes do not stop eviction or oversized headers | Yes                                                       |
+| **Make the browser send it** to `work.munaxa.com` (forms, `fetch` with credentials)                                | **Yes**: same-site, so `Lax` and `Strict` cookies are attached       | **Yes**                                                           | **Yes**                                                     | Yes                                                       |
+| **Read the response** of such a request                                                                            | No (no CORS; `Cross-Origin-Resource-Policy: same-origin`)            | No                                                                | No                                                          | No                                                        |
+
+Under a separate registrable domain, `evil.munaxa-nonprod.com` cannot set any cookie for
+`munaxa.com`. Its requests to `work.munaxa.com` are **cross-site**: `Lax` cookies are withheld
+from cross-site POSTs and subresources. Its cookies count against a different site's limit. All
+of the "Yes" rows above become "No".
+
+**The concrete Identity exposure** (today, under any shared registrable domain): a sibling plants
+`__Secure-mx_refresh=<the attacker's own valid refresh token>; Domain=munaxa.com;
+Path=/api/auth/refresh` before the victim signs in. Then:
+
+1. The browser orders that copy first, and `cookie-parser` keeps the first.
+2. The victim's next refresh rotates the **attacker's** lineage.
+3. The victim's browser receives a `__Host-mx_session` for the attacker's account.
+4. Work then files whatever the victim enters under the attacker's account.
+
+This is a login-CSRF and session-swap. The `Origin` check does not stop it, because the refresh
+request comes from Work's own page on the correct origin. A planted garbage value instead silently
+breaks renewal, a denial of service.
+
+### 4.3 Options compared
+
+|                                      | A. `work.nonprod.munaxa.com` + `work.munaxa.com`                                                  | **B. Separate non-production domain (selected)**                            | C. A + `__Host-mx_refresh`                                                                                             | D. Other strategies found |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| Cookie scoping across environments   | Shared site: non-production can set cookies production receives                                   | **Separate sites: none**                                                    | Refresh tossing closed; other tossing (`munaxa_work_tenant`, future product cookies), eviction and cookie bombs remain | see below                 |
+| `__Host-` behaviour                  | Protects the session cookie only                                                                  | Same, plus a site boundary                                                  | Protects session and refresh                                                                                           | —                         |
+| `__Secure-` behaviour                | Refresh cookie can be shadowed from non-production                                                | Cannot be shadowed from non-production                                      | Not used for refresh                                                                                                   | —                         |
+| `Domain` attribute                   | Any non-production host may set `Domain=munaxa.com`                                               | Impossible across environments                                              | As A                                                                                                                   | —                         |
+| SameSite                             | Non-production → production is **same-site**; `Lax`/`Strict` do not separate them                 | **Cross-site**; `Lax` applies                                               | As A                                                                                                                   | —                         |
+| CSRF trusted origins                 | Only the exact-origin allow-list separates environments                                           | Allow-list and SameSite                                                     | As A                                                                                                                   | —                         |
+| Identity/Work same origin (ADR-0004) | Kept                                                                                              | **Kept**: one origin per environment                                        | Kept, but the refresh token travels to every Work route (`Path=/`)                                                     | —                         |
+| Federation / MFA later               | A non-production host may use `munaxa.com` as a WebAuthn RP ID and can claim same-site trust      | **Separated**: separate RP ID, separate IdP registrations and redirect URIs | As A                                                                                                                   | —                         |
+| Password managers                    | Match on the site and offer **production** credentials on non-production pages                    | **Do not**                                                                  | As A                                                                                                                   | —                         |
+| ACM                                  | `*.nonprod.munaxa.com`, validated through a Cloudflare delegation                                 | `*.munaxa-nonprod.com`, validated in the account's own zone                 | As A                                                                                                                   | —                         |
+| Route 53 / delegation                | NS records for `nonprod` in **Cloudflare**; non-production depends on the production DNS provider | **None**: the zone is the domain's own, in `munaxa-nonprod`                 | As A                                                                                                                   | —                         |
+| Branding / UX                        | On-brand                                                                                          | Non-production only; testers see a clearly different domain                 | On-brand                                                                                                               | —                         |
+| Operational complexity               | A delegation in Cloudflare                                                                        | One registration to renew (auto-renew)                                      | An Identity and Platform change                                                                                        | —                         |
+| Cost                                 | $0.50/month zone                                                                                  | $0.50/month zone + **$16/year** domain                                      | As A                                                                                                                   | —                         |
+| Environment isolation                | Weak: production trusts nothing from non-production only because of Identity's exact allow-list   | **Strong at the browser level**                                             | Partial                                                                                                                | —                         |
+| Docs and School later                | Each product's cookies inherit the problem                                                        | Each product gets `<product>.munaxa-nonprod.com` with no extra work         | Each product must adopt `__Host-` everywhere                                                                           | —                         |
+
+**D, investigated and rejected:**
+
+- **Listing `nonprod.munaxa.com` on the Public Suffix List** would make it its own site, but listing
+  is slow, effectively permanent and meant for domains that host third parties.
+- **Using the ALB's `*.elb.amazonaws.com` hostname** gets no publicly trusted certificate, so the
+  `Secure` and `__Host-` cookies would not work.
+- **A sub-zone on Cloudflare** is A with another provider.
+- No repository or ADR proposes anything else.
+
+**Why B and not C.** C closes one attack, refresh-cookie shadowing. It leaves non-production
+same-site with production, so:
+
+- tossing of every other cookie, eviction and cookie bombs still work;
+- SameSite never separates the environments;
+- password managers still cross them;
+- a future WebAuthn RP ID could be shared.
+
+It also costs a principle Identity chose deliberately: the refresh token stays off Work's routes.
+B removes the whole class of attacks across environments for $16 a year, needs no code change, and
+keeps ADR-0004 intact. **C is still needed for production, for a different reason (§4.4).**
+
+### 4.4 Identity implications
+
+**Nothing in Identity changes for this decision.** Identity takes its origin from configuration,
+per environment:
+
+- non-production: `IDENTITY_BASE_URL=https://work.munaxa-nonprod.com/api/auth` and
+  `CSRF_TRUSTED_ORIGINS=https://work.munaxa-nonprod.com`;
+- production: the `work.munaxa.com` equivalents;
+- `IDENTITY_AUTH_AUDIENCE` is set per environment.
+
+A non-production origin must never appear in a production allow-list. Different issuers and
+different signing keys mean a non-production token is never accepted by production Work.
+
+**Still required before production — a separate Identity decision, recorded in §12 #12.** In
+production, `work.munaxa.com` will share the `munaxa.com` site with `www.`, `app.`, `admin.` (School)
+and `docs.munaxa.com`. Those are different products, providers and teams, and any of them can mount
+the §4.2 refresh-cookie attack. Ways to close it:
+
+| Option                                                                                                                                                                                                             | Works with `/api/auth/refresh`, rotation, logout, Work, the one origin? | Cost                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`__Host-mx_refresh` with `Path=/`**                                                                                                                                                                              | **Yes.**                                                                | The long-lived refresh token is attached to **every** request to the origin: Work admin page loads, `/api/v1/*`, every Identity route. That reverses the reason it is path-scoped (`cookies.ts`), puts a credential in Work's request stream, contrary to ADR-0001's intent, and needs Platform's builder bypassed or fixed |
+| Keep `__Secure-mx_refresh` (narrow path); refuse a refresh or logout whose `Cookie` header carries the name **more than once**, and require the request's `__Host-mx_session` subject to match the refresh lineage | Yes. Rotation and logout are unchanged for a single, honest cookie      | Identity code and tests; the session cookie's lifetime must cover the refresh window, to be checked                                                                                                                                                                                                                         |
+| Fix Platform's `refreshCookie` defect (`@munaxa/auth`)                                                                                                                                                             | Depends on Platform's fix                                               | Platform is frozen; the defect is already reported by Identity                                                                                                                                                                                                                                                              |
+
+The checks for the first option:
+
+- `__Host-` with `Path=/` is accepted by all current browsers.
+- Refresh, rotation (re-set with the same attributes) and logout (`clearCookie(name, '/')`) work
+  unchanged.
+- Work reads only `__Host-mx_session`, so it is not affected functionally.
+- Existing `__Secure-mx_refresh` cookies are orphaned on the switch, so users sign in once more
+  unless Identity reads both names for one release.
+
+**Technically possible, but not obviously the best of the three.** It is an Identity security
+decision for an Identity ADR in this repository (`docs/adr/`, next to ADR-0004), before Work
+production. Nothing changes here.
+
+**Work, before production (§12 #12):** give `munaxa_work_tenant` the `__Host-` prefix (`Path=/`
+suits it) so a sibling cannot toss a tenant selection. Work's admin must keep relying on
+same-origin checks (Next.js server actions check `Origin` against `Host`) for any state-changing
+action it adds.
+
+### 4.5 Zones, delegation and certificates
+
+| Environment    | Domain and zone                                                                                                                                                         | Delegation                                                                                                 | Certificate (ACM, `eu-central-1`, DNS-validated, free)                                                            |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Non-production | `munaxa-nonprod.com`, **registered and hosted in Route 53 in `munaxa-nonprod`** (one public hosted zone at the apex). Product names are alias records to the shared ALB | **None**: the registrar points at the zone's own name servers. No dependency on `munaxa.com` or Cloudflare | **One wildcard**, `*.munaxa-nonprod.com`, in `munaxa-nonprod`, covering every product                             |
+| Production     | `munaxa.com`, **stays on Cloudflare**. Each product adds its own record, DNS-only (grey cloud), CNAME to its ALB, as `docs.munaxa.com` already does                     | None needed                                                                                                | **One per product hostname** (`work.munaxa.com`, …) in the production account, validated by a CNAME in Cloudflare |
+
+Rules that follow:
+
+- **Product records are DNS-only, never Cloudflare-proxied.** A proxy adds a second hop. Identity
+  trusts exactly one (`trust proxy` = 1), so behind Cloudflare every client would appear as a
+  Cloudflare edge address, and the per-IP sign-in rate limit would collapse.
+- **No wildcard for production.** `*.munaxa.com` would also cover `www.`, `app.`, `admin.` and any
+  future host. Per-hostname certificates keep each product's certificate its own and movable to
+  another ALB or account. Non-production uses one wildcard because one account owns the whole
+  domain.
+- **Per-tenant subdomains** (deferred by ADR-0002, e.g. `acme.docs.…`) would need
+  `*.docs.<domain>`, a separate certificate, when they arrive.
+- The non-production domain is registered through Route 53 Domains in `munaxa-nonprod`. The
+  Route 53 Domains API is served from `us-east-1`, so the region-lock SCP (§8.5) must exempt
+  `route53domains`. Auto-renew on; registrant contact privacy on.
+- A CAA record restricting issuance to Amazon on `munaxa-nonprod.com` is free and recommended.
+  `munaxa.com` has none today; that is a production DNS-owner decision.
+
+### 4.6 Cost
+
+| Item                              | Charge                                                                                                                                     | Change against the previous plan                         |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| `munaxa-nonprod.com` registration | **$16 a year** (Route 53 `.com` since 2026-07-01; secondary source citing AWS's domain-pricing PDF, so re-check at purchase) ≈ $1.33/month | **New**                                                  |
+| Hosted zone `munaxa-nonprod.com`  | $0.50/month                                                                                                                                | None: replaces the planned `nonprod.munaxa.com` sub-zone |
+| DNS queries                       | Alias queries to an ALB are free; others $0.40 per million                                                                                 | Negligible                                               |
+| ACM public certificates           | $0                                                                                                                                         | None                                                     |
+| Production DNS                    | Cloudflare, as today                                                                                                                       | None                                                     |
+
+**Net new recurring cost: about $16 a year.** No other recurring AWS cost.
+
+### 4.7 Standard for every product
+
+- **Hostnames:** `<product>.munaxa-nonprod.com` in non-production and `<product>.munaxa.com` in
+  production. One origin per product per environment. Paths split services inside a product.
+  Products never share an origin.
+- **Cookies:**
+  - host-only, always;
+  - `__Host-` for every authentication or authority-bearing cookie whose path can be `/`;
+  - never `Domain=` (ADR-0002 binding decision 14);
+  - `SameSite=Lax` or stricter.
+- **CSRF:** an exact-origin allow-list per environment. A non-production origin is never in a
+  production list, and the reverse holds too.
+- **Records:** alias (non-production) or DNS-only CNAME (production) to the environment's ALB,
+  never proxied.
+- **Certificates:** the non-production wildcard covers new products automatically; production gets
+  one certificate per new hostname.
+- **Adding Docs or School** to non-production is one alias record and one listener-rule block (§4.8).
+  No zone, certificate or DNS design of its own.
+- **School** moves from `app.`/`admin.munaxa.com` to `school.munaxa.com` (ADR-0002 R2, §12 #9).
+- **School's default sender** `no-reply@munaxa.app` names a domain that returned NXDOMAIN on
+  2026-10-06, which is a School item. Non-production mail, when a product sends any, comes from
+  `munaxa-nonprod.com`, so it never affects `munaxa.com`'s SPF, DKIM, DMARC or reputation.
+
+### 4.8 ALB routing
 
 **One ALB for the environment; one hostname per product; paths only within a product.**
 
@@ -306,15 +528,23 @@ public ALB; it calls it over Cloud Map (§5), which is also what Work's `WORK_AP
 
 | Priority | Host                        | Path                                                                                                      | Target group                                                                        |
 | -------- | --------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| 100      | `work.nonprod.munaxa.com`   | `/api/auth/*`                                                                                             | `identity-api` (4001), health `/api/auth/health/ready`                              |
-| 110      | `work.nonprod.munaxa.com`   | `/api/v1/*`                                                                                               | `work-api` (3000), health `/health/ready` — **optional**: no browser calls it today |
-| 190      | `work.nonprod.munaxa.com`   | `/*`                                                                                                      | `work-admin` (3001), health `/`                                                     |
-| 200–299  | `docs.nonprod.munaxa.com`   | Docs ADR-0024 §2.3: `/api/v1/preview/stream*` → docs-api, `/*` → docs-web                                 | extension point                                                                     |
-| 300–399  | `school.nonprod.munaxa.com` | e.g. `/api/*` → school-api, `/*` → school-admin (same origin also removes School's CORS ordering problem) | extension point                                                                     |
+| 100      | `work.munaxa-nonprod.com`   | `/api/auth/*`                                                                                             | `identity-api` (4001), health `/api/auth/health/ready`                              |
+| 110      | `work.munaxa-nonprod.com`   | `/api/v1/*`                                                                                               | `work-api` (3000), health `/health/ready` — **optional**: no browser calls it today |
+| 190      | `work.munaxa-nonprod.com`   | `/*`                                                                                                      | `work-admin` (3001), health `/`                                                     |
+| 200–299  | `docs.munaxa-nonprod.com`   | Docs ADR-0024 §2.3: `/api/v1/preview/stream*` → docs-api, `/*` → docs-web                                 | extension point                                                                     |
+| 300–399  | `school.munaxa-nonprod.com` | e.g. `/api/*` → school-api, `/*` → school-admin (same origin also removes School's CORS ordering problem) | extension point                                                                     |
 | default  | —                           | —                                                                                                         | fixed 404                                                                           |
 
 Each product owns a block of 100 rule priorities. Port 80 redirects to 443. The TLS policy is a
-current AWS-recommended policy. Identity trusts exactly one proxy hop, which this ALB is.
+current AWS-recommended policy. Identity trusts exactly one proxy hop, which this ALB is. An
+unknown `Host` gets the fixed 404, so the ALB answers only for the environment's own names.
+
+### 4.9 ADR
+
+The non-production domain applies to every product, and it adds to ADR-0002's production hostname
+decision without changing it. It belongs in the **ecosystem ADR in `munaxa/munaxa`** already needed
+for decisions #1 and #2 (§8.9), so one ADR can cover registry, accounts and domains. The Identity
+refresh-cookie hardening (§4.4) is an **Identity ADR** in this repository. Neither is created here.
 
 ---
 
@@ -451,7 +681,7 @@ share, and per-product isolation stays inside the account (§2, §3.9, §8.5).
 | IAM complexity            | Every non-production role needs the Docs-style deny lists so it cannot touch production, and the reverse | Roles need only product scoping; the environment boundary is the account                        |
 | GitHub OIDC / ECR         | One OIDC provider; every trust policy must also keep environments apart                                  | One provider per account; a non-production token has nowhere in production to land (§8.4)       |
 | Secrets Manager           | Production and non-production secrets in one namespace, separated by path and IAM                        | Separate by account; no cross-account policies                                                  |
-| Route 53 / ACM            | Works                                                                                                    | Works; delegation by NS records (§8.6)                                                          |
+| Route 53 / ACM            | Works                                                                                                    | Works; the non-production domain and zone live entirely in the account (§4, §8.6)               |
 | VPC / networking          | The shared VPC beside two Docs VPCs; the Docs deployer's deny list must keep covering it                 | The shared VPC alone; `10.130.0.0/16` stays clear of Docs' ranges for any future peering        |
 | CloudWatch                | Logs and alarms of both environments in one account                                                      | Per account; cross-account viewing optional and not needed now                                  |
 | Cross-account complexity  | None                                                                                                     | One deliberate path, production reading images (§8.4); everything else is inside one account    |
@@ -563,30 +793,17 @@ fail at once:
    has administrator rights and trusts the management account, so only the management account's
    administrators may assume it.
 
-### 8.6 Route 53 and ACM
+### 8.6 Route 53 and ACM in the account structure
 
-The account structure creates **no DNS issue**:
+DNS is decided in §4. For the accounts:
 
-- `nonprod.munaxa.com` is a hosted zone **in `munaxa-nonprod`** ($0.50, already in §9).
-  `work.nonprod.munaxa.com` and the other product names are alias records there, pointing at the
-  shared ALB in the same account.
-- **Delegation** is four NS records for `nonprod` in the parent `munaxa.com` zone. That works
-  whatever hosts the parent: Route 53 in another account, or an external DNS provider. Where
-  `munaxa.com` is hosted is not recorded in any repository and stays open decision #6.
-- **ACM:** `*.nonprod.munaxa.com` is requested in `munaxa-nonprod` (`eu-central-1`, where the ALB
-  is) and DNS-validated by a CNAME in the delegated zone. It is self-contained; public certificates
-  are free.
-- **Production names** (`work.munaxa.com` …) live in the parent zone or a production zone that
-  `munaxa-nonprod` has no permission on, so a non-production deploy cannot change production DNS.
-
-**Consideration for decision #6, not an account issue.** `*.nonprod.munaxa.com` and
-`*.munaxa.com` are the same _site_ (`munaxa.com`). Browsers therefore send `SameSite=Lax` cookies
-between the two environments. Also, a compromised non-production host could set a
-`Domain=munaxa.com` cookie that production receives. Identity's session cookie is `__Host-` and
-cannot be overwritten this way. Its refresh cookie, `__Secure-mx_refresh`, is host-only in fact
-but not by prefix (`apps/api/src/auth/cookies.ts`). A separate registrable domain for
-non-production would remove the shared site. Decision #6 should weigh that against the cost of one
-domain registration.
+- The non-production domain `munaxa-nonprod.com` is registered, and its only hosted zone kept, **in
+  `munaxa-nonprod`**, with the wildcard certificate. Non-production DNS has no delegation from, and
+  no dependency on, `munaxa.com`, Cloudflare or any other account. A non-production pipeline holds
+  no credential that can change production DNS.
+- Production records stay in the `munaxa.com` zone on Cloudflare. Production certificates live in
+  the production account, validated by CNAMEs added there. `munaxa-nonprod` has no access to
+  Cloudflare at all.
 
 ### 8.7 Existing Docs Non-Production
 
@@ -617,7 +834,7 @@ AWS Organization (all features enabled; SCPs)
 │
 ├── OU NonProduction ── SCP: region lock, no IAM users/keys, cost guardrails
 │   └── munaxa-nonprod          ← this document; created first
-│       shared: VPC munaxa-shared-nonprod, ALB, endpoints, cluster, nonprod.munaxa.com, OIDC provider
+│       shared: VPC munaxa-shared-nonprod, ALB, endpoints, cluster, munaxa-nonprod.com, OIDC provider
 │       ├── Identity   roles, secrets, Valkey, database `identity`   ┐ one RDS instance
 │       ├── Work       roles, secrets, database `work`               ┘ (Work unit, §7)
 │       ├── Docs       (on joining) roles, secrets, its own RDS
@@ -675,22 +892,23 @@ roles are detailed in §8.4.
 
 Identity + Work staging, Option B (§3), `eu-central-1`, verified list prices:
 
-| Item                                                                      | $/month        | Kind                                                       |
-| ------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------- |
-| Shared ALB: $19.71 hourly + 2 public IPv4 × $3.65                         | 27.01          | Fixed                                                      |
-| ALB LCUs ($0.008 per LCU-hour)                                            | ~0.5–3         | Usage                                                      |
-| **Interface endpoints ×4, one AZ** (the network decision)                 | **35.04**      | Fixed                                                      |
-| Endpoint data processing ($0.01/GB); S3 gateway                           | < 0.10; 0      | Usage                                                      |
-| Fargate on-demand: identity-api 10.36, work-api 12.23, work-admin 10.36   | 32.95          | Fixed while running ($0.04656/vCPU-h, $0.00511/GB-h)       |
-| RDS `db.t4g.micro` Single-AZ ($13.87) + 20 GB gp3 ($2.74) (Work unit)     | 16.61          | Fixed                                                      |
-| ElastiCache Valkey `cache.t4g.micro` (Identity)                           | 10.51          | Fixed                                                      |
-| Secrets Manager ×6                                                        | 2.40           | Fixed (+ $0.05 per 10,000 calls)                           |
-| Route 53 sub-zone, Cloud Map namespace and 3 registrations                | ~1.30          | Fixed                                                      |
-| CloudWatch Logs ($0.63/GB ingested, 7 days), ECR storage ($0.10/GB-month) | ~1–3           | Usage                                                      |
-| **Total, on-demand**                                                      | **≈ 127–132**  | 125.82 fixed + usage                                       |
-| With Fargate Spot                                                         | ≈ −21          | _estimate_: Spot prices vary and are not in the price list |
-| With Redis as a sidecar instead of Valkey                                 | −10.51         | owner decision (§12 #5)                                    |
-| Rejected: Option C instead of B / Option A instead of B                   | −24.09 / +6.57 | §3.10                                                      |
+| Item                                                                        | $/month        | Kind                                                       |
+| --------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------- |
+| Shared ALB: $19.71 hourly + 2 public IPv4 × $3.65                           | 27.01          | Fixed                                                      |
+| ALB LCUs ($0.008 per LCU-hour)                                              | ~0.5–3         | Usage                                                      |
+| **Interface endpoints ×4, one AZ** (the network decision)                   | **35.04**      | Fixed                                                      |
+| Endpoint data processing ($0.01/GB); S3 gateway                             | < 0.10; 0      | Usage                                                      |
+| Fargate on-demand: identity-api 10.36, work-api 12.23, work-admin 10.36     | 32.95          | Fixed while running ($0.04656/vCPU-h, $0.00511/GB-h)       |
+| RDS `db.t4g.micro` Single-AZ ($13.87) + 20 GB gp3 ($2.74) (Work unit)       | 16.61          | Fixed                                                      |
+| ElastiCache Valkey `cache.t4g.micro` (Identity)                             | 10.51          | Fixed                                                      |
+| Secrets Manager ×6                                                          | 2.40           | Fixed (+ $0.05 per 10,000 calls)                           |
+| Route 53 zone `munaxa-nonprod.com`, Cloud Map namespace and 3 registrations | ~1.30          | Fixed                                                      |
+| Domain registration `munaxa-nonprod.com` ($16/year, §4.6)                   | ~1.33          | Fixed (annual)                                             |
+| CloudWatch Logs ($0.63/GB ingested, 7 days), ECR storage ($0.10/GB-month)   | ~1–3           | Usage                                                      |
+| **Total, on-demand**                                                        | **≈ 128–133**  | 127.15 fixed + usage                                       |
+| With Fargate Spot                                                           | ≈ −21          | _estimate_: Spot prices vary and are not in the price list |
+| With Redis as a sidecar instead of Valkey                                   | −10.51         | owner decision (§12 #5)                                    |
+| Rejected: Option C instead of B / Option A instead of B                     | −24.09 / +6.57 | §3.10                                                      |
 
 What is deliberately **not** in it: NAT gateway, endpoints in a second AZ, Multi-AZ, replicas, autoscaling, WAF, KMS
 customer-managed keys, bastion, ECS Exec endpoint, SES/S3/OpenSearch/MSK (no Identity or Work
@@ -705,19 +923,19 @@ design, or shrinking it, is the largest single saving available — a Docs owner
 
 ## 10. Staging → production
 
-| Area    | Staging (this design)                                                      | Production                                                                                                                                                         |
-| ------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Account | `munaxa-nonprod` member account                                            | Production member account (`munaxa-prod`), never the management account; images copied by digest (§8.4)                                                            |
-| AZs     | 2 (ALB minimum), endpoints in 1                                            | 2–3, everything spread                                                                                                                                             |
-| Tasks   | 1 per service, Spot                                                        | ≥2 per service, on-demand, rolling deploys                                                                                                                         |
-| Egress  | Option B: private tasks, 4 interface endpoints in 1 AZ, no internet egress | Same shape, endpoints in every AZ that runs tasks (4 × 2 AZs = $70.08); still no internet egress for Identity and Work. A NAT only for a product that needs egress |
-| ALB     | Shared                                                                     | Shared or per product; WAF                                                                                                                                         |
-| RDS     | One instance for the Work unit, Single-AZ, 7-day backups                   | Multi-AZ, larger class, 35-day backups + AWS Backup; separate Identity instance if decided                                                                         |
-| Redis   | One Valkey node                                                            | Replica, Multi-AZ                                                                                                                                                  |
-| Logs    | 7 days                                                                     | 30–90 days, alarms, dashboards                                                                                                                                     |
-| DNS     | `<product>.nonprod.munaxa.com`                                             | `<product>.munaxa.com` (ADR-0002)                                                                                                                                  |
-| Images  | ECR, promoted by digest                                                    | Same digest, copied to the production registry                                                                                                                     |
-| MFA     | Not required for staging (Identity ADR-0003)                               | Required before Work production                                                                                                                                    |
+| Area    | Staging (this design)                                                        | Production                                                                                                                                                         |
+| ------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Account | `munaxa-nonprod` member account                                              | Production member account (`munaxa-prod`), never the management account; images copied by digest (§8.4)                                                            |
+| AZs     | 2 (ALB minimum), endpoints in 1                                              | 2–3, everything spread                                                                                                                                             |
+| Tasks   | 1 per service, Spot                                                          | ≥2 per service, on-demand, rolling deploys                                                                                                                         |
+| Egress  | Option B: private tasks, 4 interface endpoints in 1 AZ, no internet egress   | Same shape, endpoints in every AZ that runs tasks (4 × 2 AZs = $70.08); still no internet egress for Identity and Work. A NAT only for a product that needs egress |
+| ALB     | Shared                                                                       | Shared or per product; WAF                                                                                                                                         |
+| RDS     | One instance for the Work unit, Single-AZ, 7-day backups                     | Multi-AZ, larger class, 35-day backups + AWS Backup; separate Identity instance if decided                                                                         |
+| Redis   | One Valkey node                                                              | Replica, Multi-AZ                                                                                                                                                  |
+| Logs    | 7 days                                                                       | 30–90 days, alarms, dashboards                                                                                                                                     |
+| DNS     | `<product>.munaxa-nonprod.com`, own domain and zone in `munaxa-nonprod` (§4) | `<product>.munaxa.com` (ADR-0002) on Cloudflare, DNS-only records, one certificate per hostname                                                                    |
+| Images  | ECR, promoted by digest                                                      | Same digest, copied to the production registry                                                                                                                     |
+| MFA     | Not required for staging (Identity ADR-0003)                                 | Required before Work production                                                                                                                                    |
 
 Nothing in the application changes between them: every difference is sizing, placement or
 configuration.
@@ -751,7 +969,8 @@ Derived from what exists (Docs: `munaxa-docs-eu-prod-*`, `/munaxa-docs/eu-prod/`
 | AWS account                  | `munaxa-<env-class>`, one per environment class, never per product                           | `munaxa-nonprod`, `munaxa-prod`                                     |
 | Organizational unit          | `NonProduction`, `Production`                                                                | `NonProduction` holds `munaxa-nonprod`                              |
 | Cloud Map namespace          | `<env>.munaxa.internal`                                                                      | `nonprod.munaxa.internal`                                           |
-| DNS                          | `<product>.nonprod.munaxa.com` / `<product>.munaxa.com`                                      | `work.nonprod.munaxa.com`                                           |
+| DNS                          | `<product>.munaxa-nonprod.com` / `<product>.munaxa.com`                                      | `work.munaxa-nonprod.com`, `work.munaxa.com`                        |
+| Authentication cookies       | host-only; `__Host-` wherever the path can be `/`; never `Domain=` (§4.7)                    | `__Host-mx_session`                                                 |
 | Tags                         | `Project=Munaxa<Product>`, `Environment=NonProduction\|Production`, `ManagedBy`, `Stack`     | `Project=MunaxaIdentity`                                            |
 
 **Already published under different names, to align (no code change):** the Identity ECR runbook uses
@@ -763,19 +982,20 @@ repository `munaxa/identity-api` and GitHub environment `aws-staging`. Under thi
 
 ## 12. Open decisions and blockers
 
-| #   | Decision                                                                                                                                                                                                  | Recommendation                                                                            |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| 1   | **Registry:** ADR-0002 §10/D6 names GHCR; AWS deployment uses ECR                                                                                                                                         | Supersede with an ecosystem ADR: ECR for AWS environments, GHCR kept for distribution     |
-| 2   | ~~**Account:** management account or a member account~~ — **resolved 2026-10-06: dedicated member account `munaxa-nonprod`** for all products' non-production; production later in its own member account | Done (§8). Needs an ecosystem ADR in `munaxa/munaxa` before the account is created (§8.9) |
-| 3   | ~~**Network:** A, B or C~~ — **resolved 2026-10-06: Option B** (private tasks + 4 interface endpoints in one AZ, no NAT, no internet egress; $35.04/month)                                                | Done (§3). C ($10.95) and A ($41.61) rejected in §3.10                                    |
-| 4   | **Identity database server:** shared with Work (separate databases) or its own instance (+~$16.61)                                                                                                        | Shared for staging; revisit for production                                                |
-| 5   | **Identity Redis:** ElastiCache Valkey (~$10.5) or loopback sidecar ($0)                                                                                                                                  | Valkey: survives task restarts and is the production shape                                |
-| 6   | **DNS:** where `munaxa.com` is hosted, and delegating `nonprod.munaxa.com`                                                                                                                                | Delegate the sub-zone to Route 53                                                         |
-| 7   | **Fargate Spot** for staging                                                                                                                                                                              | Yes                                                                                       |
-| 8   | **Docs Non-Production** (~$100 a month idle)                                                                                                                                                              | Docs owner: shrink, or move into this design                                              |
-| 9   | School: build-time `NEXT_PUBLIC_API_URL`, static S3 keys, `app.`/`admin.munaxa.com` hostnames (ADR-0002 R2)                                                                                               | Fix before School joins (§6)                                                              |
-| 10  | Naming alignment of the Identity artifacts (§11)                                                                                                                                                          | Rename before the first AWS publish                                                       |
-| 11  | ADR-0002 §7 says Identity signs RS256; Identity uses ES256                                                                                                                                                | Correct in the superseding ADR (#1)                                                       |
+| #   | Decision                                                                                                                                                                                                                                                                                      | Recommendation                                                                            |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 1   | **Registry:** ADR-0002 §10/D6 names GHCR; AWS deployment uses ECR                                                                                                                                                                                                                             | Supersede with an ecosystem ADR: ECR for AWS environments, GHCR kept for distribution     |
+| 2   | ~~**Account:** management account or a member account~~ — **resolved 2026-10-06: dedicated member account `munaxa-nonprod`** for all products' non-production; production later in its own member account                                                                                     | Done (§8). Needs an ecosystem ADR in `munaxa/munaxa` before the account is created (§8.9) |
+| 3   | ~~**Network:** A, B or C~~ — **resolved 2026-10-06: Option B** (private tasks + 4 interface endpoints in one AZ, no NAT, no internet egress; $35.04/month)                                                                                                                                    | Done (§3). C ($10.95) and A ($41.61) rejected in §3.10                                    |
+| 4   | **Identity database server:** shared with Work (separate databases) or its own instance (+~$16.61)                                                                                                                                                                                            | Shared for staging; revisit for production                                                |
+| 5   | **Identity Redis:** ElastiCache Valkey (~$10.5) or loopback sidecar ($0)                                                                                                                                                                                                                      | Valkey: survives task restarts and is the production shape                                |
+| 6   | ~~**DNS:** where `munaxa.com` is hosted, and delegating `nonprod.munaxa.com`~~ — **resolved 2026-10-06: own non-production domain `munaxa-nonprod.com`** (Route 53 in `munaxa-nonprod`, wildcard certificate, no delegation); production stays on `munaxa.com` (Cloudflare, DNS-only records) | Done (§4). Register the domain; same ecosystem ADR as #1 and #2 (§4.9)                    |
+| 7   | **Fargate Spot** for staging                                                                                                                                                                                                                                                                  | Yes                                                                                       |
+| 8   | **Docs Non-Production** (~$100 a month idle)                                                                                                                                                                                                                                                  | Docs owner: shrink, or move into this design                                              |
+| 9   | School: build-time `NEXT_PUBLIC_API_URL`, static S3 keys, `app.`/`admin.munaxa.com` hostnames (ADR-0002 R2)                                                                                                                                                                                   | Fix before School joins (§6)                                                              |
+| 10  | Naming alignment of the Identity artifacts (§11)                                                                                                                                                                                                                                              | Rename before the first AWS publish                                                       |
+| 11  | ADR-0002 §7 says Identity signs RS256; Identity uses ES256                                                                                                                                                                                                                                    | Correct in the superseding ADR (#1)                                                       |
+| 12  | **Before production, not for non-production:** a same-site sibling of `work.munaxa.com` (`www.`, `app.`, `admin.`, `docs.`) can shadow `__Secure-mx_refresh` (§4.2). Options are in §4.4. Also Work's `munaxa_work_tenant` should become `__Host-`                                            | Identity ADR in this repository; Work change. Not decided here                            |
 
 **Blockers for building this, outside this document:** Work's own AWS blockers from its readiness audit
 (migration path, `work_app` grants, RDS TLS, bootstrap from the image); decisions 1 and 6; and, for
