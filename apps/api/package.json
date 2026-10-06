@@ -11,6 +11,7 @@
     "test:integration": "echo 'integration suites live in @identity/testing, which imports these adapters directly'",
     "lint": "echo 'lint: typecheck and format:check cover this package'",
     "prisma:generate": "prisma generate --schema ../../prisma/schema.prisma",
+    "db:migrate": "node dist/migrate.js",
     "db:bootstrap-account": "node scripts/bootstrap-account.mjs",
     "db:seed-work-roles": "node scripts/seed-work-roles.mjs",
     "keys:generate": "node scripts/generate-signing-key.mjs",

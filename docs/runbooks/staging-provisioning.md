@@ -64,9 +64,10 @@ not a reason to start it anyway.
 # Work — in a munaxa-work checkout
 DATABASE_URL="postgresql://work_mig:…@…/work" pnpm db:migrate
 
-# Identity — in a munaxa-identity checkout
-psql "postgresql://identity_mig:…@…/identity" -v ON_ERROR_STOP=1 \
-  -f prisma/migrations/20260901120000_identity_baseline/migration.sql
+# Identity — the migration runner, as the owner. On AWS this is a one-off ECS task from the
+# service image (`node dist/migrate.js`); see docs/runbooks/migrations.md for the task, its
+# secrets and TLS. From a checkout, after `pnpm build`:
+DIRECT_DATABASE_URL="postgresql://identity_mig:…@…/identity" pnpm db:migrate
 
 # Identity's runtime grants: what it uses, and nothing more. Note the audit table gets
 # select and insert only — append-only is a privilege the application cannot talk its way

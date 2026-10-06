@@ -8,6 +8,7 @@
     "DATABASE_URL",
     "TEST_DATABASE_URL",
     "TEST_DIRECT_DATABASE_URL",
+    "TEST_SUPERUSER_URL",
     "REDIS_URL"
   ],
   "tasks": {

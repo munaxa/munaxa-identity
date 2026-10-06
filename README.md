@@ -26,8 +26,9 @@ in any `@munaxa/*` package, by design. The tables live here because a product ow
 ```bash
 pnpm install                       # needs a token with read:packages on the munaxa org
 pnpm keys:generate                 # prints the key pair; private half to your .env, public to Work
-createdb identity && psql identity -f prisma/migrations/*/migration.sql
-pnpm prisma:generate
+pnpm prisma:generate && pnpm build
+createdb identity                  # owned by the migration role; see docs/runbooks/migrations.md
+DIRECT_DATABASE_URL=postgresql://identity_mig:…@localhost/identity pnpm db:migrate
 
 IDENTITY_OWNER_EMAIL=you@example IDENTITY_OWNER_PASSWORD='…' \
   pnpm db:bootstrap-account --organisation acme --organisation-name Acme
@@ -56,7 +57,7 @@ The last command prints the account's `sub`. That value is what Munaxa Work need
 
 - [**Architecture**](./ARCHITECTURE.md) — ownership, the flow, tenancy, and what is deliberately absent.
 - [**Decisions**](./docs/adr) — the choices that would otherwise be re-litigated.
-- [**Runbooks**](./docs/runbooks) — provisioning, key rotation, revocation, rollback.
+- [**Runbooks**](./docs/runbooks) — provisioning, migrations, key rotation, revocation, rollback.
 - [**Artifacts**](./artifacts) — Munaxa Work's permission catalogue, and why it is a file.
 - [**Secrets**](./docs/runbooks/secrets.md) — what is secret, what is only configuration, and why.
 

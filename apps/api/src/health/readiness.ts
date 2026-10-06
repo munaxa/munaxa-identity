@@ -5,8 +5,8 @@ import type { SecurityStack } from '../platform/security.js';
  * The tables Identity cannot serve a single request without.
  *
  * Deliberately the *presence* of the schema rather than a Prisma migration version. Identity's
- * baseline is applied with `psql -f`, as the migration role, before any service starts — see
- * `docs/runbooks/staging-provisioning.md` — so `_prisma_migrations` does not exist in a
+ * migrations are applied by its own runner (`node dist/migrate.js`), as the migration role, before
+ * any service starts — see `docs/runbooks/migrations.md` — so `_prisma_migrations` does not exist in a
  * correctly-provisioned environment and a readiness probe keyed to it would fail for ever in the
  * one environment it is meant to protect. Table presence answers the question that actually
  * matters: is the schema this build expects the schema that is there?

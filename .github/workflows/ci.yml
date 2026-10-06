@@ -93,13 +93,15 @@ jobs:
         env:
           PGPASSWORD: identity
 
-      # Applied as the migration role, so the tables are owned by it rather than by a superuser.
+      # Applied as the migration role, so the tables are owned by it rather than by a superuser —
+      # and through the built runner, `node dist/migrate.js`, which is exactly what a deployment's
+      # one-off task runs from the image. Run twice: the second must apply nothing.
       - name: Migrate from zero
         run: |
-          psql "$TEST_DIRECT_DATABASE_URL" -v ON_ERROR_STOP=1 \
-            -f prisma/migrations/20260901120000_identity_baseline/migration.sql
+          pnpm db:migrate
+          pnpm db:migrate
         env:
-          PGPASSWORD: identity_mig
+          DIRECT_DATABASE_URL: ${{ env.TEST_DIRECT_DATABASE_URL }}
 
       - name: Grant the application role what it uses, and nothing more
         run: |
