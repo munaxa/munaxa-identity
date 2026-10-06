@@ -20,9 +20,12 @@ Nothing here is built. This is the design the infrastructure will be built from.
 - `munaxa-work` `apps/*/Dockerfile`, `publish-images.yml`, `packages/config`.
 - `munaxa-school` `render.yaml`, `apps/api/src` (outbound integrations).
 
-**Prices** are `eu-central-1` on-demand list prices, 730 hours a month, taken from Docs ADR-0024 §4
-and §3 (AWS Price List API, 2026-10-04) unless marked _estimate_. Tax excluded. Verify before
-committing a budget.
+**Prices** are `eu-central-1` on-demand list prices, 730 hours a month, tax excluded. They were
+re-verified on 2026-10-06 against the AWS Price List offer files for `eu-central-1` (`AmazonVPC`,
+`AmazonEC2`, `AWSELB`, `AmazonECS`, `AmazonCloudWatch`, `AWSSecretsManager`, `AmazonECR`,
+`AmazonRDS`, `AmazonElastiCache`, `AWSCloudMap`; publication dates 2026-09-11 to 2026-10-06) and
+the AWS pricing and service documentation cited in §3.2. Anything not in the price list is marked
+_estimate_.
 
 ---
 
@@ -40,14 +43,19 @@ Internet ──443──▶ ┌──────────────── 
                   │ host docs.nonprod.munaxa.com    (extension point, §4)                     │
                   │ host school.nonprod.munaxa.com  (extension point, §4)                     │
                   └────────────────────────────────────────────────────────────────────────────┘
-VPC munaxa-shared-nonprod 10.130.0.0/16  (§3.4; clear of Docs' 10.120/16 and 10.121/16)
- ├─ public subnets  (a, b)  ALB only
- ├─ app subnets     (a, b)  ECS tasks, no public IP, no NAT
+VPC munaxa-shared-nonprod 10.130.0.0/16  (§3.8; clear of Docs' 10.120/16 and 10.121/16)
+ ├─ public subnets  (a, b)  ALB only                          route: internet gateway
+ ├─ app subnets     (a, b)  Identity + Work tasks, no public IP route: local + S3 gateway, nothing else
  │     identity-api ──▶ Valkey (identity)        work-admin ──Cloud Map──▶ work-api
  │     identity-api ─┐                           work-api ─┐
  │                   └──5432 TLS──▶ RDS (Work unit: databases `identity` and `work`) ◀─┘
- ├─ data subnets    (a, b)  RDS, ElastiCache — no route out at all
- └─ endpoints (AZ a only): ecr.api, ecr.dkr, logs, secretsmanager (interface) + s3 (gateway, free)
+ │     all app tasks ──443──▶ interface endpoints (AWS APIs) / S3 gateway (ECR layers)
+ ├─ data subnets    (a, b)  RDS, ElastiCache                  route: local only
+ ├─ egress subnets  (a, b)  reserved, empty — Docs/School tasks that need the internet (§3.6)
+ └─ endpoints (AZ a only): ecr.api, ecr.dkr, logs, secretsmanager (interface, $8.76/month each)
+                           + s3 (gateway, free); endpoint policies: this account only (§3.7)
+
+Decision (§3): Option B — private tasks + VPC endpoints, no NAT gateway, no internet egress.
 
 ECS cluster munaxa-shared-nonprod: one service per deployable, one task each.
 GitHub ─OIDC─▶ per-product publisher role ─▶ ECR munaxa-<product>-<component> ─digest─▶ ECS
@@ -62,31 +70,37 @@ environments). That is ADR-0002 §10 applied to one environment.
 
 ## 2. Shared vs isolated resources
 
-| Resource                        | Shared or per product                                           | Scope                                   | Ongoing cost                               | Cheapest form acceptable for semi-production? | In production                                                     |
-| ------------------------------- | --------------------------------------------------------------- | --------------------------------------- | ------------------------------------------ | --------------------------------------------- | ----------------------------------------------------------------- |
-| AWS account                     | Shared by all products' non-production                          | Per environment                         | None                                       | Yes                                           | Separate production account(s) (§10)                              |
-| Region                          | Shared: `eu-central-1` (Docs ADR-0023)                          | All                                     | None                                       | Yes                                           | Same, plus a DR region (open in Docs)                             |
-| VPC                             | **Shared**                                                      | Per environment                         | None by itself                             | Yes                                           | Per environment; per product only if a customer demands it        |
-| Subnets / AZs                   | Shared; 2 AZs (the ALB requires two)                            | Per environment                         | None                                       | Yes                                           | 2–3 AZs, tasks spread across them                                 |
-| ALB                             | **Shared**, host + path routing                                 | Per environment                         | **Hourly** ~$27.51                         | Yes                                           | Shared or per product; WAF added                                  |
-| Route 53                        | Shared sub-zone `nonprod.munaxa.com`                            | Per environment                         | $0.50/zone                                 | Yes                                           | `munaxa.com` zone (ADR-0002: one zone, one subdomain per product) |
-| ACM                             | Shared wildcard `*.nonprod.munaxa.com`                          | Per environment                         | None                                       | Yes                                           | Per-product certificates for `<product>.munaxa.com`               |
-| ECS cluster                     | **Shared**                                                      | Per environment                         | None                                       | Yes                                           | Shared is still fine (ADR-0002 §10: compute shareable)            |
-| ECS services / task definitions | **Per deployable**                                              | Per environment                         | **Hourly** (Fargate)                       | Yes: 1 task, smallest size, Spot              | ≥2 tasks, on-demand                                               |
-| ECR repositories                | **Per deployable**                                              | Per account (images promoted by digest) | Storage only, cents                        | Yes                                           | Same names in the production account                              |
-| GitHub OIDC provider            | Shared                                                          | Per account                             | None                                       | Yes                                           | Same                                                              |
-| IAM roles                       | **Per product, per component, per environment**                 | —                                       | None                                       | Yes                                           | Same, under a production path                                     |
-| Secrets Manager                 | **Per product paths and policies**; one shared public CA bundle | Per environment                         | $0.40/secret                               | Yes                                           | Same; rotation added                                              |
-| CloudWatch Logs                 | **Per product log groups**, 7-day retention                     | Per environment                         | Usage, cents                               | Yes                                           | 30+ days, alarms                                                  |
-| VPC endpoints                   | Shared                                                          | Per environment                         | **Hourly** per endpoint per AZ             | Yes, one AZ                                   | Every AZ in use, or NAT (§3)                                      |
-| NAT gateway                     | Not used for Identity/Work                                      | —                                       | (would be hourly)                          | —                                             | When a product needs a fixed egress address                       |
-| RDS PostgreSQL                  | **Per product** (Work unit: Work + Identity)                    | Per environment                         | **Hourly** ~$16.61                         | Yes: `db.t4g.micro`, Single-AZ                | Multi-AZ, larger class, 35-day backups                            |
-| Redis / Valkey                  | **Per product, only where required** (Identity)                 | Per environment                         | **Hourly** (estimate ~$10.5) or $0 sidecar | Yes: one node, no replica                     | Managed, with a replica                                           |
-| Cloud Map namespace             | Shared                                                          | Per environment                         | ~$0.50 + registrations                     | Yes                                           | Same                                                              |
+| Resource                        | Shared or per product                                           | Scope                                   | Ongoing cost                                                 | Cheapest form acceptable for semi-production? | In production                                                     |
+| ------------------------------- | --------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------ | --------------------------------------------- | ----------------------------------------------------------------- |
+| AWS account                     | Shared by all products' non-production                          | Per environment                         | None                                                         | Yes                                           | Separate production account(s) (§10)                              |
+| Region                          | Shared: `eu-central-1` (Docs ADR-0023)                          | All                                     | None                                                         | Yes                                           | Same, plus a DR region (open in Docs)                             |
+| VPC                             | **Shared**                                                      | Per environment                         | None by itself                                               | Yes                                           | Per environment; per product only if a customer demands it        |
+| Subnets / AZs                   | Shared; 2 AZs (the ALB requires two)                            | Per environment                         | None                                                         | Yes                                           | 2–3 AZs, tasks spread across them                                 |
+| ALB                             | **Shared**, host + path routing                                 | Per environment                         | **Hourly** $19.71 + 2 public IPv4 $7.30 + LCU usage          | Yes                                           | Shared or per product; WAF added                                  |
+| Route 53                        | Shared sub-zone `nonprod.munaxa.com`                            | Per environment                         | $0.50/zone                                                   | Yes                                           | `munaxa.com` zone (ADR-0002: one zone, one subdomain per product) |
+| ACM                             | Shared wildcard `*.nonprod.munaxa.com`                          | Per environment                         | None                                                         | Yes                                           | Per-product certificates for `<product>.munaxa.com`               |
+| ECS cluster                     | **Shared**                                                      | Per environment                         | None                                                         | Yes                                           | Shared is still fine (ADR-0002 §10: compute shareable)            |
+| ECS services / task definitions | **Per deployable**                                              | Per environment                         | **Hourly** (Fargate)                                         | Yes: 1 task, smallest size, Spot              | ≥2 tasks, on-demand                                               |
+| ECR repositories                | **Per deployable**                                              | Per account (images promoted by digest) | Storage only, cents                                          | Yes                                           | Same names in the production account                              |
+| GitHub OIDC provider            | Shared                                                          | Per account                             | None                                                         | Yes                                           | Same                                                              |
+| IAM roles                       | **Per product, per component, per environment**                 | —                                       | None                                                         | Yes                                           | Same, under a production path                                     |
+| Secrets Manager                 | **Per product paths and policies**; one shared public CA bundle | Per environment                         | $0.40/secret                                                 | Yes                                           | Same; rotation added                                              |
+| CloudWatch Logs                 | **Per product log groups**, 7-day retention                     | Per environment                         | Usage, cents                                                 | Yes                                           | 30+ days, alarms                                                  |
+| VPC endpoints                   | **Shared** (4 interface + S3 gateway)                           | Per environment                         | **Hourly** $8.76 per interface endpoint per AZ; gateway free | Yes, one AZ                                   | Every AZ that runs tasks (§10)                                    |
+| NAT gateway                     | **Not used** (§3)                                               | —                                       | (would be $41.61 with its address)                           | —                                             | Only if a product needs internet egress or a fixed address        |
+| RDS PostgreSQL                  | **Per product** (Work unit: Work + Identity)                    | Per environment                         | **Hourly** ~$16.61                                           | Yes: `db.t4g.micro`, Single-AZ                | Multi-AZ, larger class, 35-day backups                            |
+| Redis / Valkey                  | **Per product, only where required** (Identity)                 | Per environment                         | **Hourly** $10.51 (Valkey `cache.t4g.micro`) or $0 sidecar   | Yes: one node, no replica                     | Managed, with a replica                                           |
+| Cloud Map namespace             | Shared                                                          | Per environment                         | ~$0.50 hosted zone + $0.10 per registered instance           | Yes                                           | Same                                                              |
 
 ---
 
 ## 3. Network topology
+
+**Decision (2026-10-06, resolves former open decision #3): Option B.** Identity and Work tasks
+run in private subnets with no public IP and **no route to the internet**. They reach the four AWS
+APIs they use through interface VPC endpoints in one AZ, and ECR image layers through the free S3
+gateway endpoint. There is no NAT gateway. Network-specific cost: **$35.04 a month fixed**, plus
+$0.01 per GB through the interface endpoints (cents at staging volume).
 
 ### 3.1 Outbound requirements, by product
 
@@ -97,68 +111,186 @@ environments). That is ADR-0002 §10 applied to one environment.
 | Docs     | **Yes** — SMTP 587 (SES, ADR-0025), ClamAV signature downloads, OIDC federation discovery, webhooks | Docs `infra/terraform/eu-prod/core/network.tf` security-group egress; ADR-0024 §2.2 |
 | School   | **Yes** — Resend email API, Firebase, WhatsApp bridge                                               | `munaxa-school/apps/api/src/communication/*`, `auth/services/firebase.service.ts`   |
 
-All four need AWS APIs: ECR (pull), CloudWatch Logs, Secrets Manager, and S3 (ECR serves image
-layers from S3).
+All four need AWS APIs at task start and while running: ECR (`ecr.api`, `ecr.dkr`) and S3 for the
+image layers, Secrets Manager for the injected secrets, and CloudWatch Logs for `awslogs`. Fargate
+tasks do not need the `ecs`, `ecs-agent` or `ecs-telemetry` endpoints (AWS ECS developer guide,
+"Amazon ECS interface VPC endpoints"). Neither application calls any other AWS API, and both task
+roles are empty (§8).
 
-### 3.2 Options, for Identity + Work today (three tasks)
+### 3.2 Verified prices behind the decision
 
-|                                   | A. Private tasks + NAT                    | B. Private tasks + VPC endpoints, no NAT                                           | C. Public-subnet tasks + public IPv4, no NAT |
-| --------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------- |
-| Monthly                           | **~$41.61** + $0.052/GB (one NAT, one AZ) | **~$35.04** (4 interface endpoints × ~$8.76 in one AZ) + $0.01/GB; S3 gateway free | **~$10.95** (3 × $3.65)                      |
-| Tasks reachable from the internet | No                                        | No                                                                                 | Only through security groups                 |
-| Fixed egress address              | Yes                                       | No egress at all                                                                   | No                                           |
-| Internet egress                   | Yes, for everything                       | **None** — and Identity/Work need none                                             | Yes                                          |
-| Precedent                         | Docs Non-Production today                 | —                                                                                  | **Docs production (ADR-0024 §2.2, §3.3)**    |
+| Item                                        | `eu-central-1` price                               | Source                                                        |
+| ------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------- |
+| NAT gateway, hourly                         | $0.052/h → **$37.96/month**                        | `AmazonEC2` `EUC1-NatGateway-Hours`                           |
+| NAT gateway, data processed                 | **$0.052/GB**, including traffic to AWS services   | `EUC1-NatGateway-Bytes`; AWS VPC pricing page                 |
+| Interface VPC endpoint, per endpoint per AZ | $0.012/h → **$8.76/month**                         | `AmazonVPC` `EUC1-VpcEndpoint-Hours`; AWS PrivateLink pricing |
+| Interface VPC endpoint, data processed      | **$0.01/GB** (first PB)                            | `EUC1-VpcEndpoint-Bytes`                                      |
+| S3 gateway endpoint                         | **$0**, no hourly or processing charge             | AWS VPC pricing page                                          |
+| Public IPv4 address (task, NAT, ALB alike)  | $0.005/h → **$3.65/month** per address             | `EUC1-PublicIPv4:InUseAddress`                                |
+| Inter-AZ transfer                           | $0.01/GB in each direction                         | `EUC1-DataTransfer-Regional-Bytes`                            |
+| ECR → Fargate, same Region                  | **$0/GB**                                          | AWS ECR pricing page                                          |
+| CloudWatch Logs ingestion / storage         | $0.63/GB / $0.0324 per GB-month                    | `EUC1-DataProcessing-Bytes`, `EUC1-TimedStorage-ByteHrs`      |
+| Secrets Manager                             | $0.40 per secret-month; $0.05 per 10,000 API calls | `AWSSecretsManager`                                           |
 
-_Interface endpoint price per AZ derived from Docs ADR-0025 §5 ("about $17.50 a month" for one
-endpoint in two AZs)._
+### 3.3 Cost of each option, Identity + Work (three service tasks)
 
-**Recommendation: B.** It is the cheapest option that keeps tasks in private subnets, which this
-programme requires, and for Identity and Work it gives up nothing: they need no internet path, so
-the absence of one is a security property, not a limitation. Put the four interface endpoints in one
-AZ; tasks in the other AZ reach them across the AZ boundary.
+|                                       | A. Private + NAT (1 AZ)             | **B. Private + endpoints (selected)** | C. Public tasks + public IPv4                 |
+| ------------------------------------- | ----------------------------------- | ------------------------------------- | --------------------------------------------- |
+| **Fixed, caused by this decision**    | $37.96 NAT + $3.65 address = $41.61 | 4 × $8.76 = **$35.04**                | 3 × $3.65 = $10.95 (+ cents per one-off task) |
+| **Variable, caused by this decision** | $0.052/GB of logs, ECR API, secrets | $0.01/GB of logs, ECR API, secrets    | $0                                            |
+| Image layers                          | $0 through the S3 gateway (add it)  | $0 through the S3 gateway             | $0 (ECR same-Region transfer is free)         |
+| Per 10 GB of logs + API traffic       | $0.52                               | $0.10                                 | $0                                            |
+| Scales with                           | traffic                             | number of endpoints × AZs             | number of running tasks                       |
 
-C is ~$24 a month cheaper and is the decision Docs already accepted for its own production. It is
-rejected here only because the owner has asked for private subnets; it is listed as a decision in §12.
+**Not caused by this decision**, identical in every option: the ALB ($19.71 hourly + $7.30 for its
+two public IPv4 addresses + LCU usage), Fargate compute, RDS, Valkey, CloudWatch Logs ingestion and
+storage, Secrets Manager secrets and API calls, ECR storage, and inter-AZ traffic between tasks and
+RDS or Valkey (both in one AZ).
 
-### 3.3 When Docs or School join this VPC
+Variable cost is immaterial at staging volume in every option: log ingestion itself costs 63× more
+per GB than the endpoint processing it passes through. The choice is decided by the fixed cost and
+by security: **B costs $24.09 a month ($289 a year) more than C, and $6.57 a month less than A**.
 
-They need internet egress (§3.1), which endpoints cannot provide. At that point:
+### 3.4 Security comparison
 
-- **One NAT gateway in one AZ (~$41.61) serves every product's internet and AWS API traffic**, and the
-  interface endpoints can be removed (keeping B *and* adding NAT would be ~$76.65). Total network cost
-  then is ~$41.61 for four products.
-- Security groups keep Identity's and Work's egress limited to what they use (443 to AWS services,
-  5432, 6379), so adding the NAT gives them no new reach.
-- Alternatively each of those products keeps its ADR-0024 public-subnet pattern ($3.65 per task).
+|                                      | A. Private + NAT                                    | **B. Private + endpoints**                                      | C. Public tasks                                                     |
+| ------------------------------------ | --------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Task public IP                       | No                                                  | **No**                                                          | Yes, one per task                                                   |
+| Reachable from the internet          | No route in                                         | **No route in**                                                 | Only security groups stand in the way                               |
+| Task security groups                 | in: from `alb`; out: data tier + 443 to `0.0.0.0/0` | **in: from `alb`; out: data tier, `endpoints`, S3 prefix list** | in: from `alb`; out: data tier + 443 to `0.0.0.0/0`                 |
+| RDS and Valkey                       | Private (data subnets, no route out)                | **Private**                                                     | Private                                                             |
+| ECR / Secrets Manager / Logs reached | Public endpoints through the NAT                    | **Private endpoint ENIs; layers via S3 gateway**                | Public endpoints through the internet gateway                       |
+| Runtime internet egress              | Yes, HTTPS to anywhere                              | **None**                                                        | Yes, HTTPS to anywhere                                              |
+| Difference from production (§10)     | Egress path production should not have              | **None in shape**; endpoints in one AZ instead of every AZ      | Public IPs and egress production should not have for these products |
 
-### 3.4 Layout
+Why the egress rows say "anywhere": the ECR API, CloudWatch Logs and Secrets Manager API endpoints
+have no AWS-managed prefix list (only S3 and DynamoDB among the services used here have one; AWS VPC
+user guide, "AWS-managed prefix lists"), so in A and C a task's security group must allow 443 to
+`0.0.0.0/0` for the task to start.
 
-| Tier                    | AZ a  | AZ b  | Route                                       |
-| ----------------------- | ----- | ----- | ------------------------------------------- |
-| Public (ALB only)       | `/24` | `/24` | Internet gateway                            |
-| App (ECS tasks)         | `/20` | `/20` | Local only (+ S3 gateway); NAT later (§3.3) |
-| Data (RDS, ElastiCache) | `/24` | `/24` | Local only                                  |
+What the $24.09 a month buys over C, concretely:
+
+1. **No inbound path to a task, even after a mistake.** In C a single wrong security-group rule makes
+   a task's public IP reachable. That bypasses the ALB, its TLS and its routing. It also defeats
+   Identity's proxy trust: Identity trusts exactly one hop (`trust proxy` = 1), so a client
+   connecting directly can choose the `X-Forwarded-For` value Identity uses as its address, and so
+   evade the per-IP sign-in rate limit. In B the app subnets have no internet route; no security-group
+   rule can create one.
+2. **No outbound path for a compromised task.** Identity holds the token signing key and both
+   applications hold database credentials. In A and C a compromised task can send them anywhere over
+   HTTPS. In B it can reach only the four AWS APIs. Endpoint policies (§3.7) restrict those to this
+   account, so the remaining path is closed too.
+3. **Production parity.** The intended production network for Identity and Work is B (§10). Staging
+   then exercises the real security groups, endpoint policies, DNS and failure modes before
+   production, including an outbound call added to either codebase: it fails in staging rather than
+   being discovered in a production review.
+
+### 3.5 Accepted compromises
+
+- **Endpoints in one AZ (AZ a).** Tasks in AZ b reach them across the AZ boundary. If AZ a fails,
+  new tasks cannot start (no image pull, no secrets) and log delivery stops until it recovers; tasks
+  already running keep serving through the ALB in AZ b. Accepted for staging. Production places the
+  endpoints in every AZ that runs tasks.
+- **No internet from inside the VPC.** No ECS Exec (it would need the `ssmmessages` endpoint,
+  +$8.76), no ad-hoc outbound debugging, no pull from any registry but ECR. One-off tasks
+  (migrations, provisioning) need none of these.
+- **No fixed egress address.** Neither product needs one.
+- **One task per service** (§5), so an endpoint or task outage is an outage; staging accepts that.
+
+### 3.6 When Docs and School join this VPC
+
+Option B stays the standard for Identity and Work. Docs and School need internet egress (§3.1),
+which endpoints cannot provide. Each product decides its own egress when it joins; the reserved
+`egress` subnet tier (§3.8) holds their internet-facing tasks, so Identity's and Work's subnets and
+security groups never change.
+
+| When                                                              | Egress for Docs/School                                         | Network cost, all four products                    |
+| ----------------------------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------- |
+| Default (Docs' own production pattern, ADR-0024)                  | Public IPv4 per task in the `egress` subnets                   | $35.04 + $3.65 × their tasks (5 tasks: **$53.29**) |
+| More than 11 such tasks, a fixed address, or private tasks wanted | One NAT gateway in AZ a, routed from the `egress` subnets only | $35.04 + $41.61 + $0.052/GB = **$76.65** + traffic |
+
+**The interface endpoints stay when a NAT arrives.** Removing them would save $35.04 but would force
+Identity and Work to reach ECR, Logs and Secrets Manager through the NAT. Because those services have
+no prefix list, that means 443 to `0.0.0.0/0`, so Identity and Work would gain the internet egress this
+decision removes. (This corrects an earlier draft of this document, which said a NAT could replace the
+endpoints without widening Identity's or Work's reach.) With private DNS on the endpoints, Docs and
+School tasks also use them for AWS APIs, which reduces their NAT traffic.
+
+### 3.7 Endpoint policies and pull conditions
+
+Endpoints without policies leave a path out: a compromised task could write to another account's
+resources using that account's credentials. So:
+
+- **S3 gateway endpoint policy:** `s3:GetObject` on `arn:aws:s3:::prod-eu-central-1-starport-layer-bucket/*`
+  only (the ECR layer bucket, per the ECR user guide). When a product later needs its own buckets,
+  they are added by name.
+- **Interface endpoint policies (`ecr.api`, `ecr.dkr`, `logs`, `secretsmanager`):** allow only
+  principals of this account (`aws:PrincipalAccount`) acting on resources of this account
+  (`aws:ResourceAccount`).
+- **Execution roles:** ECR pulls conditioned on `aws:sourceVpce` (the ECS developer guide's
+  "Fargate tasks pulling Amazon ECR images over interface endpoints"), so a leaked execution-role
+  credential cannot pull images from outside the VPC.
+
+All of these are free.
+
+### 3.8 Layout
+
+| Tier                           | AZ a  | AZ b  | Route                                | Holds                                                        |
+| ------------------------------ | ----- | ----- | ------------------------------------ | ------------------------------------------------------------ |
+| Public                         | `/24` | `/24` | Internet gateway                     | ALB only                                                     |
+| App                            | `/20` | `/20` | Local + S3 gateway only              | Identity and Work tasks, one-off tasks, endpoint ENIs (AZ a) |
+| Data                           | `/24` | `/24` | Local only                           | RDS, ElastiCache                                             |
+| Egress (reserved, empty today) | `/22` | `/22` | Decided when Docs/School join (§3.6) | Docs/School internet-facing tasks                            |
 
 CIDR: **not** `10.120.0.0/16` (Docs Non-Production) or `10.121.0.0/16` (Docs production). Proposed
 `10.130.0.0/16`, leaving room for peering if it is ever needed. Public IP auto-assignment off
-everywhere. The default VPC and default security group are used by nothing.
+everywhere; ECS services set `assignPublicIp: DISABLED`. The default VPC and default security group
+are used by nothing. Subnets and route tables cost nothing, so the reserved tier is free.
 
 Security groups, one per tier per deployable, referencing each other (pattern from Docs core network):
 
-| Group                 | Inbound                                                     | Outbound                                                              |
-| --------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------- |
-| `alb`                 | 443, 80 from the internet                                   | to each target's port                                                 |
-| `identity-api`        | 4001 from `alb`                                             | 5432 to `rds-work-unit`, 6379 to `identity-cache`, 443 to `endpoints` |
-| `work-api`            | 3000 from `work-admin` (and `alb` if `/api/v1/*` is public) | 5432 to `rds-work-unit`, 443 to `endpoints`                           |
-| `work-admin`          | 3001 from `alb`                                             | 3000 to `work-api`, 443 to `endpoints`                                |
-| `ops` (one-off tasks) | none                                                        | 5432 to `rds-work-unit`, 443 to `endpoints`                           |
-| `rds-work-unit`       | 5432 from `identity-api`, `work-api`, `ops`                 | none                                                                  |
-| `identity-cache`      | 6379 from `identity-api`                                    | none                                                                  |
-| `endpoints`           | 443 from the app tier                                       | none                                                                  |
+| Group                 | Inbound                                                      | Outbound                                                                                     |
+| --------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `alb`                 | 443, 80 from the internet                                    | to each target's port                                                                        |
+| `identity-api`        | 4001 from `alb`                                              | 5432 to `rds-work-unit`, 6379 to `identity-cache`, 443 to `endpoints` and the S3 prefix list |
+| `work-api`            | 3000 from `work-admin` (and `alb` if `/api/v1/*` is public)  | 5432 to `rds-work-unit`, 443 to `endpoints` and the S3 prefix list                           |
+| `work-admin`          | 3001 from `alb`                                              | 3000 to `work-api`, 443 to `endpoints` and the S3 prefix list                                |
+| `ops` (one-off tasks) | none                                                         | 5432 to `rds-work-unit`, 443 to `endpoints` and the S3 prefix list                           |
+| `rds-work-unit`       | 5432 from `identity-api`, `work-api`, `ops`                  | none                                                                                         |
+| `identity-cache`      | 6379 from `identity-api`                                     | none                                                                                         |
+| `endpoints`           | 443 from the app-tier groups (later: the egress-tier groups) | none                                                                                         |
 
-Without a NAT, the Work admin cannot reach the API through the public ALB; it calls it over Cloud Map
-(§5), which is also what Work's `WORK_API_URL` expects.
+No group anywhere has an egress rule to `0.0.0.0/0`. DNS to the VPC resolver is not filtered by
+security groups and needs no rule. Without a NAT, the Work admin cannot reach the API through the
+public ALB; it calls it over Cloud Map (§5), which is also what Work's `WORK_API_URL` expects.
+
+### 3.9 Shared and isolated, in the network
+
+- **Shared by every product in the environment:** the VPC, its subnet tiers and route tables, the
+  internet gateway, the interface endpoints and S3 gateway endpoint, the ALB and its HTTPS listener,
+  the wildcard certificate, the Cloud Map namespace, and (if ever added) the NAT gateway.
+- **Isolated per product or deployable:** security groups, target groups and listener-rule priority
+  blocks (§4), ECS services and their task ENIs, execution and task roles, endpoint access (each
+  execution role reads only its own secret and repository), RDS instances with their databases, roles
+  and security groups, the Valkey node, secrets, log groups and ECR repositories. A product's tasks
+  can reach another product's data tier only if that product's security group names them; none does.
+
+### 3.10 Rejected options
+
+- **A — private tasks + NAT gateway ($41.61 + $0.052/GB).** It costs more than B and gives Identity
+  and Work an HTTPS egress path to anywhere that they do not use. It becomes useful only when a
+  product needs internet egress (§3.6), and then only for that product's subnets.
+- **C — public-subnet tasks with public IPv4 ($10.95, Docs production's ADR-0024 pattern).** It is
+  $24.09 a month cheaper. It is acceptable for Docs, which needs egress anyway and controls exposure
+  with "inbound only from the ALB" security groups. It is rejected for Identity and Work because it
+  makes security groups the only barrier to direct exposure, which defeats the one-hop proxy trust,
+  and it opens HTTPS egress to anywhere from the service that holds the signing key, to save $24 a
+  month. The owner's constraints (private subnets kept even at minimal capacity; security not
+  sacrificed merely for cost) rule it out.
+- **B with endpoints in both AZs ($70.08).** Redundancy staging does not need (§3.5).
+- **IPv6-only tasks with an egress-only internet gateway.** Not evaluated in detail. It gives
+  internet egress like A and C, ECR's interface endpoints do not serve IPv6-only tasks (AWS ECS
+  developer guide), and support for every dependency over IPv6 was not verified.
 
 ---
 
@@ -318,24 +450,26 @@ resource must carry the `nonprod` token and `Environment=NonProduction` if it li
 
 ## 9. Cost-minimization strategy
 
-Identity + Work staging, Option B, `eu-central-1`:
+Identity + Work staging, Option B (§3), `eu-central-1`, verified list prices:
 
-| Item                                                   | $/month   | Kind                                                                  |
-| ------------------------------------------------------ | --------- | --------------------------------------------------------------------- |
-| Shared ALB (hourly + 2 public IPv4 + ~0.5 LCU)         | ~27.51    | Hourly + usage                                                        |
-| Interface endpoints ×4, one AZ                         | ~35.04    | Hourly (_derived_)                                                    |
-| Fargate: identity-api, work-api, work-admin, on-demand | ~32.97    | Hourly (_derived from Docs rates_)                                    |
-| RDS `db.t4g.micro` Single-AZ + 20 GB (Work unit)       | ~16.61    | Hourly                                                                |
-| ElastiCache Valkey `cache.t4g.micro` (Identity)        | ~10.5     | Hourly (_estimate_: Redis OSS node is $13.14; Valkey is listed lower) |
-| Secrets Manager ×6                                     | ~2.40     | Fixed                                                                 |
-| Route 53 sub-zone + Cloud Map namespace                | ~1.00     | Fixed                                                                 |
-| CloudWatch Logs (7 days), ECR storage, S3 gateway      | ~1–2      | Usage                                                                 |
-| **Total, on-demand**                                   | **≈ 128** |                                                                       |
-| With Fargate Spot                                      | ≈ 107     | _estimate_                                                            |
-| With Redis as a sidecar instead of Valkey              | −10.5     | owner decision                                                        |
-| With Option C instead of B                             | −24       | owner decision                                                        |
+| Item                                                                      | $/month        | Kind                                                       |
+| ------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------- |
+| Shared ALB: $19.71 hourly + 2 public IPv4 × $3.65                         | 27.01          | Fixed                                                      |
+| ALB LCUs ($0.008 per LCU-hour)                                            | ~0.5–3         | Usage                                                      |
+| **Interface endpoints ×4, one AZ** (the network decision)                 | **35.04**      | Fixed                                                      |
+| Endpoint data processing ($0.01/GB); S3 gateway                           | < 0.10; 0      | Usage                                                      |
+| Fargate on-demand: identity-api 10.36, work-api 12.23, work-admin 10.36   | 32.95          | Fixed while running ($0.04656/vCPU-h, $0.00511/GB-h)       |
+| RDS `db.t4g.micro` Single-AZ ($13.87) + 20 GB gp3 ($2.74) (Work unit)     | 16.61          | Fixed                                                      |
+| ElastiCache Valkey `cache.t4g.micro` (Identity)                           | 10.51          | Fixed                                                      |
+| Secrets Manager ×6                                                        | 2.40           | Fixed (+ $0.05 per 10,000 calls)                           |
+| Route 53 sub-zone, Cloud Map namespace and 3 registrations                | ~1.30          | Fixed                                                      |
+| CloudWatch Logs ($0.63/GB ingested, 7 days), ECR storage ($0.10/GB-month) | ~1–3           | Usage                                                      |
+| **Total, on-demand**                                                      | **≈ 127–132**  | 125.82 fixed + usage                                       |
+| With Fargate Spot                                                         | ≈ −21          | _estimate_: Spot prices vary and are not in the price list |
+| With Redis as a sidecar instead of Valkey                                 | −10.51         | owner decision (§12 #5)                                    |
+| Rejected: Option C instead of B / Option A instead of B                   | −24.09 / +6.57 | §3.10                                                      |
 
-What is deliberately **not** in it: NAT gateway, Multi-AZ, replicas, autoscaling, WAF, KMS
+What is deliberately **not** in it: NAT gateway, endpoints in a second AZ, Multi-AZ, replicas, autoscaling, WAF, KMS
 customer-managed keys, bastion, ECS Exec endpoint, SES/S3/OpenSearch/MSK (no Identity or Work
 requirement), extra ALBs. Each Docs/School join adds its tasks and database; the network and ALB do
 not repeat.
@@ -348,19 +482,19 @@ design, or shrinking it, is the largest single saving available — a Docs owner
 
 ## 10. Staging → production
 
-| Area    | Staging (this design)                                    | Production                                                                                 |
-| ------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Account | Non-production account                                   | Separate production account(s), outside the management account                             |
-| AZs     | 2 (ALB minimum), endpoints in 1                          | 2–3, everything spread                                                                     |
-| Tasks   | 1 per service, Spot                                      | ≥2 per service, on-demand, rolling deploys                                                 |
-| Egress  | Endpoints only (B)                                       | Endpoints in every AZ, or NAT per AZ when egress or a fixed address is needed              |
-| ALB     | Shared                                                   | Shared or per product; WAF                                                                 |
-| RDS     | One instance for the Work unit, Single-AZ, 7-day backups | Multi-AZ, larger class, 35-day backups + AWS Backup; separate Identity instance if decided |
-| Redis   | One Valkey node                                          | Replica, Multi-AZ                                                                          |
-| Logs    | 7 days                                                   | 30–90 days, alarms, dashboards                                                             |
-| DNS     | `<product>.nonprod.munaxa.com`                           | `<product>.munaxa.com` (ADR-0002)                                                          |
-| Images  | ECR, promoted by digest                                  | Same digest, copied to the production registry                                             |
-| MFA     | Not required for staging (Identity ADR-0003)             | Required before Work production                                                            |
+| Area    | Staging (this design)                                                      | Production                                                                                                                                                         |
+| ------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Account | Non-production account                                                     | Separate production account(s), outside the management account                                                                                                     |
+| AZs     | 2 (ALB minimum), endpoints in 1                                            | 2–3, everything spread                                                                                                                                             |
+| Tasks   | 1 per service, Spot                                                        | ≥2 per service, on-demand, rolling deploys                                                                                                                         |
+| Egress  | Option B: private tasks, 4 interface endpoints in 1 AZ, no internet egress | Same shape, endpoints in every AZ that runs tasks (4 × 2 AZs = $70.08); still no internet egress for Identity and Work. A NAT only for a product that needs egress |
+| ALB     | Shared                                                                     | Shared or per product; WAF                                                                                                                                         |
+| RDS     | One instance for the Work unit, Single-AZ, 7-day backups                   | Multi-AZ, larger class, 35-day backups + AWS Backup; separate Identity instance if decided                                                                         |
+| Redis   | One Valkey node                                                            | Replica, Multi-AZ                                                                                                                                                  |
+| Logs    | 7 days                                                                     | 30–90 days, alarms, dashboards                                                                                                                                     |
+| DNS     | `<product>.nonprod.munaxa.com`                                             | `<product>.munaxa.com` (ADR-0002)                                                                                                                                  |
+| Images  | ECR, promoted by digest                                                    | Same digest, copied to the production registry                                                                                                                     |
+| MFA     | Not required for staging (Identity ADR-0003)                               | Required before Work production                                                                                                                                    |
 
 Nothing in the application changes between them: every difference is sizing, placement or
 configuration.
@@ -404,19 +538,19 @@ repository `munaxa/identity-api` and GitHub environment `aws-staging`. Under thi
 
 ## 12. Open decisions and blockers
 
-| #   | Decision                                                                                                                      | Recommendation                                                                                                   |
-| --- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| 1   | **Registry:** ADR-0002 §10/D6 names GHCR; AWS deployment uses ECR                                                             | Supersede with an ecosystem ADR: ECR for AWS environments, GHCR kept for distribution                            |
-| 2   | **Account:** staging in the Organizations management account (where Docs prod and Non-Production are) or a new member account | New member account for non-production (free); keeps staging out of the Docs production deployer's reach entirely |
-| 3   | **Network:** B (private + endpoints, ~$35) or C (public IPv4, ~$11, Docs precedent)                                           | B, as requested; C saves ~$24 a month if the owner accepts it                                                    |
-| 4   | **Identity database server:** shared with Work (separate databases) or its own instance (+~$16.61)                            | Shared for staging; revisit for production                                                                       |
-| 5   | **Identity Redis:** ElastiCache Valkey (~$10.5) or loopback sidecar ($0)                                                      | Valkey: survives task restarts and is the production shape                                                       |
-| 6   | **DNS:** where `munaxa.com` is hosted, and delegating `nonprod.munaxa.com`                                                    | Delegate the sub-zone to Route 53                                                                                |
-| 7   | **Fargate Spot** for staging                                                                                                  | Yes                                                                                                              |
-| 8   | **Docs Non-Production** (~$100 a month idle)                                                                                  | Docs owner: shrink, or move into this design                                                                     |
-| 9   | School: build-time `NEXT_PUBLIC_API_URL`, static S3 keys, `app.`/`admin.munaxa.com` hostnames (ADR-0002 R2)                   | Fix before School joins (§6)                                                                                     |
-| 10  | Naming alignment of the Identity artifacts (§11)                                                                              | Rename before the first AWS publish                                                                              |
-| 11  | ADR-0002 §7 says Identity signs RS256; Identity uses ES256                                                                    | Correct in the superseding ADR (#1)                                                                              |
+| #   | Decision                                                                                                                                                   | Recommendation                                                                                                   |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 1   | **Registry:** ADR-0002 §10/D6 names GHCR; AWS deployment uses ECR                                                                                          | Supersede with an ecosystem ADR: ECR for AWS environments, GHCR kept for distribution                            |
+| 2   | **Account:** staging in the Organizations management account (where Docs prod and Non-Production are) or a new member account                              | New member account for non-production (free); keeps staging out of the Docs production deployer's reach entirely |
+| 3   | ~~**Network:** A, B or C~~ — **resolved 2026-10-06: Option B** (private tasks + 4 interface endpoints in one AZ, no NAT, no internet egress; $35.04/month) | Done (§3). C ($10.95) and A ($41.61) rejected in §3.10                                                           |
+| 4   | **Identity database server:** shared with Work (separate databases) or its own instance (+~$16.61)                                                         | Shared for staging; revisit for production                                                                       |
+| 5   | **Identity Redis:** ElastiCache Valkey (~$10.5) or loopback sidecar ($0)                                                                                   | Valkey: survives task restarts and is the production shape                                                       |
+| 6   | **DNS:** where `munaxa.com` is hosted, and delegating `nonprod.munaxa.com`                                                                                 | Delegate the sub-zone to Route 53                                                                                |
+| 7   | **Fargate Spot** for staging                                                                                                                               | Yes                                                                                                              |
+| 8   | **Docs Non-Production** (~$100 a month idle)                                                                                                               | Docs owner: shrink, or move into this design                                                                     |
+| 9   | School: build-time `NEXT_PUBLIC_API_URL`, static S3 keys, `app.`/`admin.munaxa.com` hostnames (ADR-0002 R2)                                                | Fix before School joins (§6)                                                                                     |
+| 10  | Naming alignment of the Identity artifacts (§11)                                                                                                           | Rename before the first AWS publish                                                                              |
+| 11  | ADR-0002 §7 says Identity signs RS256; Identity uses ES256                                                                                                 | Correct in the superseding ADR (#1)                                                                              |
 
 **Blockers for building this, outside this document:** Work's own AWS blockers from its readiness audit
 (migration path, `work_app` grants, RDS TLS, bootstrap from the image), and decisions 1, 2 and 6.
