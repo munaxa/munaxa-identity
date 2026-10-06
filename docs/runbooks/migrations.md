@@ -79,7 +79,8 @@ before the instance switches CA.
 
 ## AWS staging: the one-off ECS task
 
-Same task family as the Identity service — same image digest, same private subnets — with:
+Same task family as the Identity service — the same ECR image digest (`ecr-image.md`), the same
+private subnets — with:
 
 ```text
 command            ["node", "dist/migrate.js"]          (working directory is /app/apps/api)

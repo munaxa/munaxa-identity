@@ -58,6 +58,7 @@ The last command prints the account's `sub`. That value is what Munaxa Work need
 - [**Architecture**](./ARCHITECTURE.md) — ownership, the flow, tenancy, and what is deliberately absent.
 - [**Decisions**](./docs/adr) — the choices that would otherwise be re-litigated.
 - [**Runbooks**](./docs/runbooks) — provisioning, migrations, key rotation, revocation, rollback.
+- [**Image publishing**](./docs/runbooks/ecr-image.md) — the image in ECR via GitHub OIDC, its digest, and rollback.
 - [**Artifacts**](./artifacts) — Munaxa Work's permission catalogue, and why it is a file.
 - [**Secrets**](./docs/runbooks/secrets.md) — what is secret, what is only configuration, and why.
 
