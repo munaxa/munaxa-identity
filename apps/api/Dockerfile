@@ -57,6 +57,18 @@ RUN pnpm --filter @identity/config build && \
     pnpm --filter @identity/api exec prisma generate --schema ../../prisma/schema.prisma && \
     pnpm --filter @identity/api build
 
+# The release job for the shared AWS stack (munaxa-platform infra/aws): the full migration history,
+# applied by the owner role from its own secret bundle (DATABASE_MIGRATION_URL), never by the
+# runtime role. It needs the Prisma CLI, a development dependency, so it is cut from the build stage
+# before the production install below removes it. The baseline grants identity_app its privileges
+# table by table, so nothing runs after it.
+FROM build AS migrate
+ENV NODE_ENV=production
+RUN addgroup -S identity && adduser -S -G identity migrate
+USER migrate
+CMD ["sh", "-c", "export DATABASE_URL=\"$DATABASE_MIGRATION_URL\" && exec /app/node_modules/.bin/prisma migrate deploy --schema=/app/prisma/schema.prisma"]
+
+FROM build AS prune
 # Dev dependencies are removed with a production install rather than with `pnpm prune --prod` or
 # `pnpm deploy`, both of which were tried first and both of which are wrong here.
 #
@@ -107,17 +119,17 @@ RUN addgroup -S identity && adduser -S -G identity identity
 # tree of relative symlinks into node_modules/.pnpm; move a package and every link inside it dangles.
 # So the workspace shape is preserved and only the parts a running service needs are carried over —
 # no source, no test, no toolchain.
-COPY --from=build --chown=identity:identity /app/node_modules ./node_modules
-COPY --from=build --chown=identity:identity /app/package.json ./package.json
-COPY --from=build --chown=identity:identity /app/packages/config/package.json ./packages/config/package.json
-COPY --from=build --chown=identity:identity /app/packages/config/dist ./packages/config/dist
-COPY --from=build --chown=identity:identity /app/packages/config/node_modules ./packages/config/node_modules
-COPY --from=build --chown=identity:identity /app/apps/api/package.json ./apps/api/package.json
-COPY --from=build --chown=identity:identity /app/apps/api/dist ./apps/api/dist
-COPY --from=build --chown=identity:identity /app/apps/api/scripts ./apps/api/scripts
-COPY --from=build --chown=identity:identity /app/apps/api/node_modules ./apps/api/node_modules
-COPY --from=build --chown=identity:identity /app/artifacts ./artifacts
-COPY --from=build --chown=identity:identity /app/prisma ./prisma
+COPY --from=prune --chown=identity:identity /app/node_modules ./node_modules
+COPY --from=prune --chown=identity:identity /app/package.json ./package.json
+COPY --from=prune --chown=identity:identity /app/packages/config/package.json ./packages/config/package.json
+COPY --from=prune --chown=identity:identity /app/packages/config/dist ./packages/config/dist
+COPY --from=prune --chown=identity:identity /app/packages/config/node_modules ./packages/config/node_modules
+COPY --from=prune --chown=identity:identity /app/apps/api/package.json ./apps/api/package.json
+COPY --from=prune --chown=identity:identity /app/apps/api/dist ./apps/api/dist
+COPY --from=prune --chown=identity:identity /app/apps/api/scripts ./apps/api/scripts
+COPY --from=prune --chown=identity:identity /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=prune --chown=identity:identity /app/artifacts ./artifacts
+COPY --from=prune --chown=identity:identity /app/prisma ./prisma
 
 WORKDIR /app/apps/api
 

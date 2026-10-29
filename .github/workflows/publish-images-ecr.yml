@@ -1,0 +1,171 @@
+# Publishing Munaxa Identity's images to Amazon ECR for the shared AWS stack (munaxa-platform
+# infra/aws), so an ECS deployment pulls an artifact built and checked here, pinned by digest.
+#
+#   munaxa-identity/api      apps/api/Dockerfile, target runtime
+#   munaxa-identity/migrate  apps/api/Dockerfile, target migrate (the release job)
+#
+# publish-images.yml (GHCR, for Render) is left as it is until the AWS deployment is validated and
+# Render is retired; both run on an image/* tag until then.
+#
+# **Tag-triggered, and the tag names the commit.** A tag `image/<40-hex commit SHA>` on a commit
+# that is on `main`. The jobs that touch ECR run in the protected `image-release` environment and
+# assume this repository's image publisher role through GitHub OIDC; the role's trust requires that
+# environment and an image/* tag, and it may push only to this product's repositories. No registry
+# credential exists.
+#
+# **No `latest`.** Two immutable tags per image (`<short>`, `sha-<full>`) and the digest, which is
+# what the stack's tfvars name. Inert until the owner sets the repository variable
+# AWS_IMAGE_PUBLISHER_ROLE_ARN (munaxa-platform infra/aws/README.md, gate G2).
+
+name: Publish images to ECR
+
+on:
+  push:
+    tags:
+      - 'image/**'
+
+concurrency:
+  group: publish-ecr-${{ github.ref }}
+  cancel-in-progress: false # never cancel a half-finished push to a registry
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  REGISTRY: 229251310592.dkr.ecr.eu-central-1.amazonaws.com
+
+jobs:
+  source:
+    name: Resolve the source commit
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      short: ${{ steps.resolve.outputs.short }}
+    steps:
+      - name: Read the commit from the tag name
+        id: resolve
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          sha="${REF_NAME#image/}"
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::tag must be image/<40-hex commit SHA>, got '$REF_NAME'"; exit 1
+          fi
+          if [ "$GITHUB_SHA" != "$sha" ]; then
+            echo "::error::tag $REF_NAME points at $GITHUB_SHA, not at the commit it names"; exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=${sha:0:7}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Confirm the commit is on main (reviewed history)
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main"; exit 1; }
+
+  publish:
+    name: ${{ matrix.repository }}
+    needs: source
+    runs-on: ubuntu-latest
+    environment: image-release # required reviewer; the publisher role trusts only this subject
+    permissions:
+      contents: read
+      packages: read # @munaxa/* from GitHub Packages, during the build only
+      id-token: write # GitHub OIDC, for the image publisher role
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repository: munaxa-identity/api
+            target: runtime
+          - repository: munaxa-identity/migrate
+            target: migrate
+    env:
+      SHA: ${{ needs.source.outputs.sha }}
+      SHORT: ${{ needs.source.outputs.short }}
+    steps:
+      - name: Refuse to run before the publisher role exists
+        env:
+          ROLE: ${{ vars.AWS_IMAGE_PUBLISHER_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE" ]; then
+            echo "::error::AWS_IMAGE_PUBLISHER_ROLE_ARN is not set (munaxa-platform infra/aws, gate G2)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Assume the image publisher role
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_IMAGE_PUBLISHER_ROLE_ARN }}
+          role-session-name: gha-publish-${{ github.run_id }}
+          role-duration-seconds: 3600
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: '229251310592'
+
+      - name: Sign in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: ${{ matrix.target }}
+          push: true
+          provenance: false # a single-platform manifest, so the digest names the image
+          sbom: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ matrix.repository }}:${{ env.SHORT }}
+            ${{ env.REGISTRY }}/${{ matrix.repository }}:sha-${{ env.SHA }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.SHA }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          # The registry credential for @munaxa/* as a BuildKit secret, never a build argument.
+          secrets: |
+            npm_token=${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+
+      - name: Verify the image runs as non-root and carries no credential
+        env:
+          REF: ${{ env.REGISTRY }}/${{ matrix.repository }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [ -n "${{ steps.build.outputs.digest }}" ] || { echo "::error::no digest was produced"; exit 1; }
+          docker pull "$REF"
+          user=$(docker run --rm --entrypoint sh "$REF" -c 'id -un')
+          [ "$user" != "root" ] || { echo "::error::image runs as root"; exit 1; }
+          if docker history --no-trunc --format '{{.CreatedBy}}' "$REF" | grep -qE 'ghp_|github_pat_|_authToken=[A-Za-z0-9]'; then
+            echo "::error::a credential appears in image history"; exit 1
+          fi
+          if docker run --rm --entrypoint sh "$REF" -c 'find / -name ".npmrc" 2>/dev/null | xargs grep -l "_authToken=[A-Za-z0-9]" 2>/dev/null' | grep -q .; then
+            echo "::error::an npmrc carrying a token is present in the image"; exit 1
+          fi
+          # The same check as publish-images.yml: a production install once shipped the toolchain.
+          if [ "${{ matrix.target }}" = runtime ]; then
+            for pkg in vitest eslint turbo '@nestjs+cli'; do
+              if docker run --rm --entrypoint sh "$REF" -c "ls -d /app/node_modules/.pnpm/${pkg}@* 2>/dev/null" | grep -q .; then
+                echo "::error::development dependency $pkg present in the runtime image"; exit 1
+              fi
+            done
+          fi
+          {
+            echo "### ${{ matrix.repository }}"
+            echo "\`$REF\` from \`$SHA\`, runs as \`$user\`"
+          } >> "$GITHUB_STEP_SUMMARY"
