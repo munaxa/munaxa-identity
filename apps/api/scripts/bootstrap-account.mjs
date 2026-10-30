@@ -22,7 +22,16 @@
  *
  *   DIRECT_DATABASE_URL=… IDENTITY_OWNER_EMAIL=… IDENTITY_OWNER_PASSWORD=… \
  *     node apps/api/scripts/bootstrap-account.mjs --organisation acme [--role work-staging-operator]
+ *
+ * **The password never travels as a command-line value or a task override.** On ECS it is injected
+ * from a one-run secret bundle (`docs/runbooks/aws.md`), where the task definition holds only the
+ * secret's ARN; anywhere else `IDENTITY_OWNER_PASSWORD_FILE` names a file holding it. An override
+ * would be recorded in plain text by DescribeTasks and CloudTrail. The password is needed only to
+ * create the account: assigning a role to an existing one runs without it, so the bundle can be
+ * deleted as soon as the account exists. The owner URL is `DIRECT_DATABASE_URL`, or
+ * `DATABASE_MIGRATION_URL` as the `identity-migrate` bundle names it.
  */
+import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { PasswordPolicyService, StaticBreachRegistry } from '@munaxa/auth';
@@ -39,6 +48,20 @@ const fail = (message) => {
   process.exit(1);
 };
 
+/**
+ * The password from `IDENTITY_OWNER_PASSWORD_FILE` when set, else `IDENTITY_OWNER_PASSWORD`, else
+ * empty. Only the newline an editor or `echo` adds is removed: a password may end in a space.
+ */
+const ownerPassword = () => {
+  const file = (process.env.IDENTITY_OWNER_PASSWORD_FILE ?? '').trim();
+  if (file === '') return process.env.IDENTITY_OWNER_PASSWORD ?? '';
+  try {
+    return readFileSync(file, 'utf8').replace(/\r?\n$/, '');
+  } catch (error) {
+    fail(`IDENTITY_OWNER_PASSWORD_FILE names ${file}, which could not be read: ${String(error)}`);
+  }
+};
+
 const withTenant = async (client, tenantId, work) => {
   await client.query('begin');
   try {
@@ -53,35 +76,39 @@ const withTenant = async (client, tenantId, work) => {
 };
 
 const run = async () => {
-  const connection = process.env.DIRECT_DATABASE_URL ?? process.env.TEST_DIRECT_DATABASE_URL;
+  const connection =
+    process.env.DIRECT_DATABASE_URL ??
+    process.env.DATABASE_MIGRATION_URL ??
+    process.env.TEST_DIRECT_DATABASE_URL;
   const email = (process.env.IDENTITY_OWNER_EMAIL ?? '').trim();
-  const password = process.env.IDENTITY_OWNER_PASSWORD ?? '';
+  const password = ownerPassword();
   const slug = (argument('organisation') ?? process.env.IDENTITY_DEFAULT_ORGANISATION ?? '').trim();
   const organisationName = argument('organisation-name') ?? slug;
   const roleKey = argument('role');
 
   if (!connection) {
     fail(
-      'Set DIRECT_DATABASE_URL to a migrated Identity database, as the migration owner. Provisioning ' +
+      'Set DIRECT_DATABASE_URL (or DATABASE_MIGRATION_URL) to a migrated Identity database, as the migration owner. Provisioning ' +
         'an organisation is not something the application role may do, and this script does not ask it to.',
     );
   }
   if (email === '') fail('Set IDENTITY_OWNER_EMAIL.');
-  if (password === '')
-    fail('Set IDENTITY_OWNER_PASSWORD. It is never echoed and never stored in plaintext.');
   if (slug === '')
     fail('Give --organisation <slug>: an account belongs to exactly one organisation.');
 
-  // The real policy, not a relaxed one. Violations are listed all at once so an operator fixes
-  // them in one attempt.
-  const policy = new PasswordPolicyService({ breachRegistry: new StaticBreachRegistry() });
-  const validation = await policy.validate(password, { userInfo: [email] });
-  if (!validation.valid) {
-    fail(
-      `IDENTITY_OWNER_PASSWORD does not meet the password policy:\n  - ${validation.violations
-        .map((violation) => violation.message ?? violation.rule ?? String(violation))
-        .join('\n  - ')}`,
-    );
+  // The real policy, not a relaxed one, checked before anything is written. Violations are listed
+  // all at once so an operator fixes them in one attempt. No password is fine at this point: it is
+  // needed only if the account turns out not to exist.
+  if (password !== '') {
+    const policy = new PasswordPolicyService({ breachRegistry: new StaticBreachRegistry() });
+    const validation = await policy.validate(password, { userInfo: [email] });
+    if (!validation.valid) {
+      fail(
+        `IDENTITY_OWNER_PASSWORD does not meet the password policy:\n  - ${validation.violations
+          .map((violation) => violation.message ?? violation.rule ?? String(violation))
+          .join('\n  - ')}`,
+      );
+    }
   }
 
   const pool = new pg.Pool({ connectionString: connection, max: 1 });
@@ -116,6 +143,11 @@ const run = async () => {
           ' No password was written.\n',
       );
     } else {
+      if (password === '')
+        fail(
+          `${email} does not exist in organisation ${slug}, so a password is needed to create it. ` +
+            'Set IDENTITY_OWNER_PASSWORD from a secret, or IDENTITY_OWNER_PASSWORD_FILE. It is never echoed and never stored in plaintext.',
+        );
       const encoded = await defaultPasswordHasher.hash(password);
       accountId = randomUUID();
 

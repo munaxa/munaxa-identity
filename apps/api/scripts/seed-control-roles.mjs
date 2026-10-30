@@ -71,11 +71,16 @@ const fail = (message) => {
 };
 
 const run = async () => {
-  const connection = process.env.DIRECT_DATABASE_URL ?? process.env.TEST_DIRECT_DATABASE_URL;
+  const connection =
+    process.env.DIRECT_DATABASE_URL ??
+    process.env.DATABASE_MIGRATION_URL ??
+    process.env.TEST_DIRECT_DATABASE_URL;
   const slug = (argument('organisation') ?? '').trim();
 
   if (!connection)
-    fail('Set DIRECT_DATABASE_URL to a migrated Identity database, as the migration owner.');
+    fail(
+      'Set DIRECT_DATABASE_URL (or DATABASE_MIGRATION_URL) to a migrated Identity database, as the migration owner.',
+    );
   // No fallback to IDENTITY_DEFAULT_ORGANISATION: that is the customer-facing default, and these
   // grants belong to the operator organisation only.
   if (slug === '') fail('Give --organisation <slug>: the operator organisation, named explicitly.');

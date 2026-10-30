@@ -57,24 +57,44 @@ Identity signs with it.
 
 Control accepts an Identity token only from one organisation (`OPERATOR_ORGANISATION_ID`), from a
 subject on `OPERATOR_SUBJECT_ALLOWLIST`, and only for the `control:*` permissions the token's roles
-grant. Identity seeds those roles from `artifacts/control-permissions.json`. After the `migrate`
-task, with the owner URL (`DATABASE_MIGRATION_URL` from `<env>/identity-migrate`) as
-`DIRECT_DATABASE_URL`, run from `apps/api` in the runtime image:
+grant. Identity seeds those roles from `artifacts/control-permissions.json`.
 
-1. `IDENTITY_OWNER_EMAIL=… IDENTITY_OWNER_PASSWORD=… node scripts/bootstrap-account.mjs
---organisation munaxa-group --organisation-name "Munaxa Group"` creates the operator
-   organisation and the first operator. It prints `organisation` and `sub`.
+The steps run as the run-only task `identity-bootstrap` (shared stack): the Identity `api` image,
+working directory `apps/api`, with two secret bundles injected as ECS `secrets`, so the task
+definition holds only their ARNs:
+
+| Bundle                                   | Keys                                              | Lifetime                                   |
+| ---------------------------------------- | ------------------------------------------------- | ------------------------------------------ |
+| `munaxa-<env>/identity-migrate`          | `DATABASE_MIGRATION_URL` (`identity_owner`)       | standing                                   |
+| `munaxa-<env>/identity-bootstrap/<slug>` | `IDENTITY_OWNER_EMAIL`, `IDENTITY_OWNER_PASSWORD` | one operator, one run; delete after step 1 |
+
+**Never pass `IDENTITY_OWNER_PASSWORD` as a container override or on the command line.** Run-task
+overrides are returned in plain text by `DescribeTasks` and recorded in CloudTrail. Only the
+command is overridden below, and it carries the organisation slug and a role key, nothing secret.
+Outside ECS, `IDENTITY_OWNER_PASSWORD_FILE` names a file holding the password instead.
+
+1. Write `identity-bootstrap/<slug>` for the first operator, then run
+   `node scripts/bootstrap-account.mjs --organisation munaxa-group --organisation-name "Munaxa Group"`.
+   It creates the operator organisation and the account and prints `organisation` and `sub`.
+   **Delete the bundle's value** (or the secret) now: nothing below needs the password.
 2. `node scripts/seed-control-roles.mjs --organisation munaxa-group` writes
    `control-operator-admin` (every `control:*` permission) and `control-operator-viewer` (the
-   reads). It prints `OPERATOR_ORGANISATION_ID`. It is idempotent.
-3. Run step 1 again with `--role control-operator-admin` (or `-viewer`). The account exists, so no
-   password is written; only the role is assigned. Repeat 1 and 3 for each operator.
+   reads). It prints `OPERATOR_ORGANISATION_ID`. It is idempotent and needs no bundle but
+   `identity-migrate`.
+3. `node scripts/bootstrap-account.mjs --organisation munaxa-group --role control-operator-admin`
+   (or `-viewer`), with `IDENTITY_OWNER_EMAIL` set to the operator but no password. The account
+   exists, so only the role is assigned; a missing account is refused rather than created.
+   Repeat 1 and 3 for each operator.
 4. Restart the `identity` service. Role definitions are cached in process.
 5. Set the platform variables `control_operator_organisation_id` (the organisation id) and
    `control_operator_subjects` (each operator's `sub`), then apply.
 
+For step 3 the email is not secret, so the `identity-bootstrap` bundle may hold only
+`IDENTITY_OWNER_EMAIL` at that point; an empty `IDENTITY_OWNER_PASSWORD` key is treated as absent.
+
 Seed these roles in the operator organisation only, never in a customer organisation. The scripts
-connect as `identity_owner`; the application role cannot create organisations or system roles.
+connect as `identity_owner` (`DIRECT_DATABASE_URL`, or `DATABASE_MIGRATION_URL` as the bundle names
+it); the application role cannot create organisations or system roles.
 
 ## Open points for review
 
