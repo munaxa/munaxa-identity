@@ -53,6 +53,29 @@ The two rules in `deploy/RENDER.md` still hold. `PLATFORM_AUTH_ISSUER` in every 
 equal `IDENTITY_BASE_URL`. `IDENTITY_SIGNING_KID` must appear in the consumers' public keys before
 Identity signs with it.
 
+## Operator organisation and Control roles
+
+Control accepts an Identity token only from one organisation (`OPERATOR_ORGANISATION_ID`), from a
+subject on `OPERATOR_SUBJECT_ALLOWLIST`, and only for the `control:*` permissions the token's roles
+grant. Identity seeds those roles from `artifacts/control-permissions.json`. After the `migrate`
+task, with the owner URL (`DATABASE_MIGRATION_URL` from `<env>/identity-migrate`) as
+`DIRECT_DATABASE_URL`, run from `apps/api` in the runtime image:
+
+1. `IDENTITY_OWNER_EMAIL=… IDENTITY_OWNER_PASSWORD=… node scripts/bootstrap-account.mjs
+--organisation munaxa-group --organisation-name "Munaxa Group"` creates the operator
+   organisation and the first operator. It prints `organisation` and `sub`.
+2. `node scripts/seed-control-roles.mjs --organisation munaxa-group` writes
+   `control-operator-admin` (every `control:*` permission) and `control-operator-viewer` (the
+   reads). It prints `OPERATOR_ORGANISATION_ID`. It is idempotent.
+3. Run step 1 again with `--role control-operator-admin` (or `-viewer`). The account exists, so no
+   password is written; only the role is assigned. Repeat 1 and 3 for each operator.
+4. Restart the `identity` service. Role definitions are cached in process.
+5. Set the platform variables `control_operator_organisation_id` (the organisation id) and
+   `control_operator_subjects` (each operator's `sub`), then apply.
+
+Seed these roles in the operator organisation only, never in a customer organisation. The scripts
+connect as `identity_owner`; the application role cannot create organisations or system roles.
+
 ## Open points for review
 
 - **Audience.** `IDENTITY_AUTH_AUDIENCE=munaxa-work,munaxa-control` puts both audiences in every

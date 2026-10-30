@@ -149,7 +149,9 @@ const run = async () => {
         return true;
       });
       if (!assigned)
-        fail(`No role "${roleKey}" in organisation ${slug}. Run db:seed-work-roles first.`);
+        fail(
+          `No role "${roleKey}" in organisation ${slug}. Run db:seed-work-roles or db:seed-control-roles first.`,
+        );
       // Unscoped, deliberately: a Platform scope suffixes every Work grant in the role, producing
       // strings Munaxa Work drops as undeclared.
       process.stdout.write(`Assigned ${roleKey}, unscoped.\n`);

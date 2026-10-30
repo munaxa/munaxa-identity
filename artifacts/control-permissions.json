@@ -1,0 +1,12 @@
+[
+  "control:audit:read",
+  "control:catalogue:read",
+  "control:catalogue:write",
+  "control:credentials:manage",
+  "control:customers:read",
+  "control:customers:write",
+  "control:licences:issue",
+  "control:subscriptions:read",
+  "control:subscriptions:write",
+  "control:usage:read"
+]
