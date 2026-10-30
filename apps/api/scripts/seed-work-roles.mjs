@@ -89,11 +89,16 @@ const fail = (message) => {
 };
 
 const run = async () => {
-  const connection = process.env.DIRECT_DATABASE_URL ?? process.env.TEST_DIRECT_DATABASE_URL;
+  const connection =
+    process.env.DIRECT_DATABASE_URL ??
+    process.env.DATABASE_MIGRATION_URL ??
+    process.env.TEST_DIRECT_DATABASE_URL;
   const slug = (argument('organisation') ?? process.env.IDENTITY_DEFAULT_ORGANISATION ?? '').trim();
 
   if (!connection)
-    fail('Set DIRECT_DATABASE_URL to a migrated Identity database, as the migration owner.');
+    fail(
+      'Set DIRECT_DATABASE_URL (or DATABASE_MIGRATION_URL) to a migrated Identity database, as the migration owner.',
+    );
   if (slug === '') fail('Give --organisation <slug>: roles are per-organisation, never global.');
 
   const pool = new pg.Pool({ connectionString: connection, max: 1 });
