@@ -16,6 +16,9 @@ const bootstrap = async (): Promise<void> => {
   const environment = loadEnvironment();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: true });
 
+  // The client address the rate limiter counts is `request.ip`; behind a load balancer it is only
+  // the client's when the balancer is trusted (see `TRUST_PROXY_HOPS`).
+  app.set('trust proxy', environment.TRUST_PROXY_HOPS);
   app.use(cookieParser());
   // The sign-in page is a plain HTML form, so the service parses form encoding as well as JSON.
   // Without this a browser's post arrives with an empty body and every sign-in fails as though the

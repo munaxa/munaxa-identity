@@ -38,7 +38,12 @@ defaults already give `PUBLIC` execute on functions and usage on types.
 The plain environment is set in the stack's `services.tf`: `NODE_ENV=production`, `PORT=4001`,
 `IDENTITY_BASE_URL`, `IDENTITY_AUTH_AUDIENCE`, `IDENTITY_SIGNING_ALGORITHM=ES256`,
 `IDENTITY_SIGNING_KID`, `IDENTITY_DEFAULT_ORGANISATION`, `CSRF_TRUSTED_ORIGINS` (Identity, Work
-and the operator host) and `LOG_PRETTY=false`.
+and the operator host), `LOG_PRETTY=false` and `TRUST_PROXY_HOPS=1`.
+
+`TRUST_PROXY_HOPS=1` makes `request.ip` the address the ALB saw rather than the ALB's own. Without
+it every sign-in counts against one per-IP login limit (10 in 15 minutes), so a handful of attempts
+from anyone returns 429 to everyone. On the operator host, which Cloudflare proxies, the address is
+the Cloudflare edge's; that host is limited to operators, so the coarser count is accepted there.
 
 The secrets are in the bundle `<env>/identity`, which only the execution role can read:
 `DATABASE_URL`, `IDENTITY_SIGNING_PRIVATE_KEY` (from `pnpm keys:generate`),

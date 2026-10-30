@@ -56,6 +56,25 @@ describe('a complete environment', () => {
   });
 });
 
+describe('the proxies in front', () => {
+  it('trusts none unless told how many there are', () => {
+    expect(loadEnvironment(complete).TRUST_PROXY_HOPS).toBe(0);
+  });
+
+  it('takes the count an operator sets behind a load balancer', () => {
+    expect(loadEnvironment({ ...complete, TRUST_PROXY_HOPS: '1' }).TRUST_PROXY_HOPS).toBe(1);
+  });
+
+  it('refuses a count that is not a small whole number', () => {
+    expect(() => loadEnvironment({ ...complete, TRUST_PROXY_HOPS: '-1' })).toThrow(
+      /TRUST_PROXY_HOPS/,
+    );
+    expect(() => loadEnvironment({ ...complete, TRUST_PROXY_HOPS: 'true' })).toThrow(
+      /TRUST_PROXY_HOPS/,
+    );
+  });
+});
+
 describe('what it refuses', () => {
   const rejects = (overrides: Record<string, string | undefined>, expected: RegExp): void => {
     expect(() => loadEnvironment({ ...complete, ...overrides })).toThrowError(expected);
