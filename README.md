@@ -59,6 +59,8 @@ The last command prints the account's `sub`. That value is what Munaxa Work need
 - [**Runbooks**](./docs/runbooks) — provisioning, key rotation, revocation, rollback.
 - [**Artifacts**](./artifacts) — Munaxa Work's permission catalogue, and why it is a file.
 - [**Secrets**](./docs/runbooks/secrets.md) — what is secret, what is only configuration, and why.
+- [**AWS**](./docs/runbooks/aws.md) — the shared AWS stack (draft): images, the migrate task and configuration.
+- [**Dependency overrides**](./docs/dependency-overrides.md) — each override, the advisory behind it and when it goes.
 
 ## Known limitations
 
