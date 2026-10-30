@@ -13,6 +13,7 @@
     "prisma:generate": "prisma generate --schema ../../prisma/schema.prisma",
     "db:bootstrap-account": "node scripts/bootstrap-account.mjs",
     "db:seed-work-roles": "node scripts/seed-work-roles.mjs",
+    "db:seed-control-roles": "node scripts/seed-control-roles.mjs",
     "keys:generate": "node scripts/generate-signing-key.mjs",
     "check:catalogue-drift": "node scripts/check-catalogue-drift.mjs",
     "catalogue:refresh": "node scripts/refresh-work-catalogue.mjs"

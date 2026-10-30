@@ -49,3 +49,19 @@ Nothing dangerous, and that is by design. Work validates every incoming grant ag
 closed catalogue and drops anything it does not declare, with a reason. So a stale file here
 produces a _denial_, never an escalation. `pnpm check:catalogue-drift` turns that quiet denial into
 a loud build failure, which is the only part that needs engineering.
+
+## `control-permissions.json`
+
+Munaxa Control's operator permission catalogue, in the `control:` grant form.
+
+|                     |                                                     |
+| ------------------- | --------------------------------------------------- |
+| **Owner**           | `munaxa-control`                                    |
+| **Source of truth** | `munaxa-control/artifacts/control-permissions.json` |
+| **Refresh**         | copy the file from a Control commit on `main`       |
+| **Consumed by**     | `scripts/seed-control-roles.mjs`                    |
+
+Control emits it with `pnpm catalogue:emit` and its CI fails when the committed file is stale, so
+the copy in Control's `main` is the catalogue. Copy it in unchanged and name the Control commit in
+the commit message; this copy was taken at `739be21`. Drift fails the same way as Work's: Control
+drops a grant it does not declare, so a stale file here is a denial, never an escalation.
