@@ -118,6 +118,18 @@ export const IDENTITY_SCHEMA = extendConfig(
 
     LOG_PRETTY: boolean({ default: false }),
 
+    /**
+     * How many proxies stand in front of the service, which is Express's `trust proxy`.
+     *
+     * The login rate limit counts per client address, and that address is `request.ip`. With no
+     * proxy trusted, behind a load balancer it is the balancer's own address, so every client
+     * shares one counter: ten sign-ins in fifteen minutes from anyone locks out everyone. `1` on
+     * the shared AWS stack (the ALB). `0`, the default, trusts no `X-Forwarded-For`, which is right
+     * when the service is reached directly and is the only safe value when nothing strips a
+     * client's own header.
+     */
+    TRUST_PROXY_HOPS: integer({ default: 0, min: 0, max: 10 }),
+
     IDENTITY_SIGNING_ALGORITHM: oneOf(IDENTITY_SIGNING_ALGORITHMS, { default: 'ES256' }),
     IDENTITY_SIGNING_KID: string({
       minLength: 3,
