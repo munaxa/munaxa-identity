@@ -112,6 +112,16 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Amazon RDS's eu-central-1 root CAs (deploy/aws/rds-ca-eu-central-1.crt, AWS's regional trust
+# bundle), for the bootstrap scripts the shared stack's identity-bootstrap task runs from this
+# image (scripts/bootstrap-account.mjs, seed-control-roles.mjs, seed-work-roles.mjs). They connect
+# with node-postgres, which treats `sslmode=require` as `verify-full`; RDS certificates chain to
+# these private roots and to nothing in Node's store, so without them every run fails with
+# SELF_SIGNED_CERT_IN_CHAIN. Appending them keeps full verification (chain and host name) rather
+# than turning it off. Public certificates, not signing material.
+COPY deploy/aws/rds-ca-eu-central-1.crt /usr/local/share/ca-certificates/rds-ca-eu-central-1.crt
+ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/rds-ca-eu-central-1.crt
+
 # Never root. A container that is compromised should not also be privileged inside itself.
 RUN addgroup -S identity && adduser -S -G identity identity
 

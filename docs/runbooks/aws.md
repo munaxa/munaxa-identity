@@ -33,6 +33,20 @@ The `migrate` image runs `prisma migrate deploy` with the owner URL from its own
 scripts in `deploy/supabase/` are not used on AWS: RDS has no PostgREST to close, and PostgreSQL's
 defaults already give `PUBLIC` execute on functions and usage on types.
 
+## TLS to the database
+
+The stack's URLs end in `?sslmode=require`, and RDS refuses plain connections (`rds.force_ssl=1`).
+The service connects through Prisma, which does not verify the server certificate by default. The
+bootstrap scripts below connect with node-postgres, which reads `require` as `verify-full`: the
+certificate must chain to a trusted root and match the host name. RDS certificates chain to
+Amazon's private regional roots, which Node does not ship, so the runtime image appends
+`deploy/aws/rds-ca-eu-central-1.crt` (AWS's eu-central-1 bundle from
+`truststore.pki.rds.amazonaws.com`) through `NODE_EXTRA_CA_CERTS`. Verification stays on, so the
+host in `DATABASE_MIGRATION_URL` must be the instance endpoint
+(`<id>.<suffix>.eu-central-1.rds.amazonaws.com`), not an IP address or another alias.
+`packages/testing/src/rds-certificate-trust.test.ts` pins the bundle's fingerprints and the
+Dockerfile wiring.
+
 ## Runtime configuration
 
 The plain environment is set in the stack's `services.tf`: `NODE_ENV=production`, `PORT=4001`,
