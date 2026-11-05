@@ -19,7 +19,8 @@ repository variable `AWS_IMAGE_PUBLISHER_ROLE_ARN`.
 | `munaxa-identity/api`     | `runtime` (unchanged)        | `identity` service, port 4001    |
 | `munaxa-identity/migrate` | `migrate`                    | `identity-migrate` run-only task |
 
-`publish-images.yml` (GHCR, for Render) is unchanged until Render is retired.
+`publish-images.yml` (GHCR, for Render) runs only when dispatched by hand, never on an `image/**`
+tag, until Render is retired.
 
 ## Database and migrations
 
@@ -124,7 +125,9 @@ it); the application role cannot create organisations or system roles.
   token, so a token issued for a Work sign-in is also accepted by Control's audience check. One
   audience per client would be tighter; it is a code change in Identity, left for review.
 - **MFA.** `mfaSatisfied` is always false today, so Control runs with `OPERATOR_REQUIRE_MFA=false`.
-  The operator host is limited to `operator_cidrs` at the load balancer until MFA exists.
+  The operator host sits behind Cloudflare Access with an MFA Require rule (munaxa-platform
+  `infra/aws/cloudflare-access.md`), Control verifies the Access token, and
+  `OPERATOR_SUBJECT_ALLOWLIST` is mandatory until MFA exists. `operator_cidrs` is empty.
 
 ## Checked locally (PostgreSQL 16, Docker)
 
