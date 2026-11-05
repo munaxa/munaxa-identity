@@ -6,14 +6,14 @@
 # image is built here, where BuildKit secrets work, and Render pulls it by digest.
 #
 # Publication is a decision about a specific validated commit, not something every push should do,
-# so this is deliberate-trigger only: a tag, or a dispatch naming the commit to build.
+# so this is deliberate-trigger only: a dispatch naming the commit to build.
 
 name: Publish image
 
+# Not on `image/**` tags any more: those are the ECR release tags (publish-images-ecr.yml), which
+# run behind the image-release environment. This GHCR job has no environment and holds
+# PLATFORM_PACKAGES_TOKEN, so it runs only when dispatched by hand, until Render is retired.
 on:
-  push:
-    tags:
-      - 'image/**'
   workflow_dispatch:
     inputs:
       commit:
