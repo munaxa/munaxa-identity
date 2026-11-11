@@ -124,6 +124,26 @@ secret-leak guard) is not used yet for the same lockfile reason; `sendEmail` her
 retries, and the message bodies follow Platform's `security.password-reset-requested` and
 `security.password-changed` wording.
 
+## Changing a password while signed in
+
+`POST /api/auth/password/change` with `{currentPassword, newPassword}`, authenticated by the
+session cookie (`resolvePrincipal`: verified token, live session, active account, current token
+version) and behind the edge's origin allow-list. Platform's `LoginService.changePassword` proves
+the current password, applies policy and the breach check, writes the hash and bumps the token
+version. In the same transaction (`unitOfWork`, account row locked) Identity revokes every
+outstanding reset link and every session and refresh lineage, **including the caller's**, then
+clears the cookies: the person signs in again. A failure part-way changes nothing (tested).
+
+Answers: `200 {ok, signedOut}`, `401 AUTH_UNAUTHENTICATED` (no valid session),
+`401 AUTH_INVALID_CREDENTIALS` (wrong current password), `422` policy or breach, `429` after 5
+attempts per account in 15 minutes (shared cache; `503` if the cache is unreachable), `503` on a
+dependency failure. Audit: `auth.password.changed` (success, or failure with
+`reason: current-password`).
+
+Not yet: for an account with MFA enrolled, the change asks for the password only. A TOTP step-up
+belongs with the recent-reauthentication helper in the MFA work and should be added to this route
+when that lands.
+
 ## Operational failures
 
 | Symptom                                        | Meaning                                                                                                                                                | Action                                                            |
