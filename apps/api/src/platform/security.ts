@@ -28,6 +28,7 @@ import { PrismaUserDirectory } from '../persistence/user-directory.adapter.js';
 import { TenantDirectory } from '../persistence/tenant-directory.js';
 import type { PrismaService } from '../persistence/prisma.service.js';
 import { emailTransportFor } from '../delivery/email.js';
+import { PasswordChange, createChangeLimiter } from '../password/password-change.js';
 import { PasswordRecovery, createResetLimiter } from '../password/password-recovery.js';
 import { openCache, type CacheHandle } from './cache.js';
 import { RoleAdministration } from './role-administration.js';
@@ -80,6 +81,8 @@ export interface SecurityStack {
    * an account already enrolled is then refused at sign-in rather than let through.
    */
   readonly mfa: IdentityMfa | undefined;
+  /** Changing a password while signed in. */
+  readonly passwordChange: PasswordChange;
   close(): Promise<void>;
 }
 
@@ -277,6 +280,25 @@ export const buildSecurityStack = async (
     },
   });
 
+  const passwordChange = new PasswordChange({
+    security: { tokens, sessions, directory },
+    prisma,
+    login,
+    revocation,
+    // Outstanding reset links are bound to the old password already; revoking them as well means
+    // the table says so, rather than leaving rows that only fail on use.
+    revokeResetLinks: (tenantId, userId) => recovery.revokeOutstanding(tenantId, userId),
+    limiter: createChangeLimiter(cache),
+    audit,
+    log: (level, event, fields) => {
+      if (logger === undefined) {
+        process.stderr.write(`[identity] ${event} ${JSON.stringify(fields)}\n`);
+        return;
+      }
+      logger[level]({ event, ...fields }, event);
+    },
+  });
+
   return {
     login,
     directory,
@@ -309,6 +331,7 @@ export const buildSecurityStack = async (
     limitEnforcement: sessions.limitEnforcement,
     recovery,
     mfa,
+    passwordChange,
     close: async () => {
       await recovery.idle();
       await handle.close();
