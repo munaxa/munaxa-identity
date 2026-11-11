@@ -11,11 +11,12 @@ import { defaultPasswordHasher } from '@munaxa/crypto';
 import { PermissionResolver } from '@munaxa/rbac';
 import { RateLimiter, BASELINE_RATE_LIMIT_RULES } from '@munaxa/security';
 import { SessionManager } from '@munaxa/session';
-import { toCorrelationId } from '@munaxa/types';
+import { toCorrelationId, type EpochMillis } from '@munaxa/types';
 import type { IdentityEnvironment } from '@identity/config';
 
 import { buildMfaKeys } from '../mfa/mfa-keys.js';
 import { buildIdentityMfa, type IdentityMfa } from '../mfa/mfa-runtime.js';
+import { AccountLockdown, CredentialRevocation } from '../account/credential-revocation.js';
 import { PrismaAuditRepository } from '../persistence/audit-repository.adapter.js';
 import { PrismaRefreshTokenStore } from '../persistence/refresh-token-store.adapter.js';
 import { PrismaResetTokenStore } from '../persistence/reset-token-store.adapter.js';
@@ -43,6 +44,18 @@ export interface SecurityStack {
   readonly tokens: TokenService;
   readonly refreshTokens: RefreshTokenService;
   readonly sessions: SessionManager;
+  /**
+   * Ends sessions together with the refresh lineages bound to them, in one transaction. The only
+   * way Identity revokes a session for a user-facing reason; see `CredentialRevocation`.
+   */
+  readonly revocation: CredentialRevocation;
+  /**
+   * Platform's verifier pinned to the token's own issue time: signature, issuer and audience are
+   * checked, expiry is not. For logout only — see `verifiedClaimsIgnoringExpiry`.
+   */
+  tokensAt(token: string): TokenService;
+  /** Account disablement and the suspected-compromise response. */
+  readonly lockdown: AccountLockdown;
   readonly resolver: PermissionResolver;
   readonly roles: RoleAdministration;
   readonly audit: AuditService;
@@ -139,8 +152,21 @@ export const buildSecurityStack = async (
     accessTokenTtl: environment.MUNAXA_ACCESS_TOKEN_TTL,
   });
 
+  const revocation = new CredentialRevocation(prisma);
+
   const refreshTokens = new RefreshTokenService({
     store: refreshStore,
+    // A rotated token presented again means the lineage is held by two parties. Platform revokes
+    // the family; the session that family kept alive goes with it, or the access token in the
+    // second party's hands keeps passing every session check until it expires. Awaited, so a
+    // failure here surfaces as a refused refresh rather than as a half-revoked lineage.
+    onReuseDetected: (record) =>
+      revocation.revokeSessionOfFamily(
+        record.tenantId,
+        record.userId,
+        record.sessionId,
+        'token-reuse',
+      ),
     ttl: environment.MUNAXA_REFRESH_TOKEN_TTL,
     // The pepper is the deployment's signing secret: a stolen database cannot be used to look a
     // refresh token up without it.
@@ -219,6 +245,20 @@ export const buildSecurityStack = async (
     tokens,
     refreshTokens,
     sessions,
+    revocation,
+    lockdown: new AccountLockdown(directory, revocation),
+    tokensAt: (token: string) => {
+      const issuedAt = tokens.decodeUnsafe(token)?.iat;
+      return new TokenService({
+        signer: signing.signer,
+        issuer: environment.MUNAXA_TOKEN_ISSUER,
+        audience: environment.MUNAXA_TOKEN_AUDIENCE,
+        accessTokenTtl: environment.MUNAXA_ACCESS_TOKEN_TTL,
+        clock: {
+          now: () => ((typeof issuedAt === 'number' ? issuedAt : 0) * 1_000) as EpochMillis,
+        },
+      });
+    },
     resolver,
     roles: new RoleAdministration(roleRepository, roleAssignments, resolver),
     audit,

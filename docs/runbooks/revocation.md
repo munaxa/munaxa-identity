@@ -22,6 +22,48 @@ later — the resolver cache expiring — and Work honours an already-issued tok
 | Account disabled                      | at once; refresh refuses                            | when the access token expires |
 | Refresh token replayed                | at once; the whole lineage is revoked               | when the access token expires |
 
+## Sessions and lineages are revoked together
+
+Every user-facing revocation goes through `CredentialRevocation`
+(`apps/api/src/account/credential-revocation.ts`), which revokes the `identity_session` row **and**
+every refresh token bound to it in one transaction, with the account id in the `WHERE` clause.
+
+| Trigger                                                   | What is revoked                                     | Reason recorded    |
+| --------------------------------------------------------- | --------------------------------------------------- | ------------------ |
+| `POST /api/auth/logout`                                   | the caller's session and its lineage                | `logout`           |
+| `DELETE /api/auth/sessions/:id` (own session only)        | that session and its lineage                        | `logout`           |
+| `POST /api/auth/sessions/revoke-others`                   | every other session of the caller, and lineages     | `logout-all`       |
+| Password reset (`revokeAllForUser`)                       | every session and refresh token of the account      | `password-reset`   |
+| Password change (`revokeAllForUser`)                      | the same; optionally keeping the changing session   | `password-changed` |
+| MFA removal or replacement (`revokeAllForUser`, `except`) | every other session                                 | `mfa-changed`      |
+| Refresh token replayed                                    | the lineage (Platform) and its session (Identity)   | `token-reuse`      |
+| `AccountLockdown.suspectedCompromise`                     | token version bumped, everything revoked            | `risk-detected`    |
+| `AccountLockdown.disable`                                 | status disabled, version bumped, everything revoked | `account-disabled` |
+| Refresh after a token-version bump                        | the lineage and its session                         | `password-changed` |
+
+Two properties hold whatever races what:
+
+- **Revocation is one-way.** `PrismaSessionStore.update` only writes an unrevoked row, so the
+  whole-record write `SessionManager.touch` makes on every refresh can no longer write
+  `revoked_at = null` over a revocation that committed between its read and its write.
+- **Refresh cannot restore a session.** Every rotation re-reads the account (status and current
+  token version) and re-validates the session against that version; a failure revokes the lineage.
+  A token rotated concurrently with a revocation is refused on its first use.
+
+`AccountLockdown` has no HTTP route yet: there is no administration API. It is what one, an
+operator script or a risk engine calls.
+
+## What an already-issued access token can still do
+
+The access token is a 15-minute ES256 JWT. After any revocation above:
+
+- **Every Identity route refuses it at once.** `resolvePrincipal` (`apps/api/src/auth/principal.ts`)
+  verifies the token, loads the account, requires the current token version, and validates the
+  session row on every request.
+- **Munaxa Work keeps accepting it until it expires** — at most `ACCESS_TOKEN_TTL` plus clock skew,
+  ≈ 15½ minutes — because Work verifies tokens without calling Identity. No refresh can extend it.
+  This is the window the section below describes, unchanged by session management.
+
 ## Cutting someone off now
 
 Revoke the session **and** the refresh lineage. No further token is issued, so the exposure is

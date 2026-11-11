@@ -43,14 +43,17 @@ The last command prints the account's `sub`. That value is what Munaxa Work need
 
 ## The API
 
-|                                     |                                                                    |
-| ----------------------------------- | ------------------------------------------------------------------ |
-| `GET /api/auth/login`               | The sign-in page. A plain form; works without JavaScript.          |
-| `POST /api/auth/login`              | Credentials in, `__Host-mx_session` and `__Secure-mx_refresh` out. |
-| `POST /api/auth/refresh`            | Rotates both, re-resolves permissions, detects reuse.              |
-| `POST /api/auth/logout`             | Revokes the session and the lineage. Works on an expired token.    |
-| `GET /api/auth/session`             | Subject and expiry. Never a token, never a permission set.         |
-| `GET /api/auth/health/{live,ready}` | Readiness touches the database.                                    |
+|                                         |                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------ |
+| `GET /api/auth/login`                   | The sign-in page. A plain form; works without JavaScript.          |
+| `POST /api/auth/login`                  | Credentials in, `__Host-mx_session` and `__Secure-mx_refresh` out. |
+| `POST /api/auth/refresh`                | Rotates both, re-resolves permissions, detects reuse.              |
+| `POST /api/auth/logout`                 | Revokes the session and the lineage. Works on an expired token.    |
+| `GET /api/auth/session`                 | Subject and expiry. Never a token, never a permission set.         |
+| `GET /api/auth/sessions`                | The caller's live sessions: times, network prefix, device label.   |
+| `DELETE /api/auth/sessions/:id`         | Signs out one of the caller's own sessions, lineage included.      |
+| `POST /api/auth/sessions/revoke-others` | Signs out every session except the one making the request.         |
+| `GET /api/auth/health/{live,ready}`     | Readiness touches the database.                                    |
 
 ## Documentation
 
