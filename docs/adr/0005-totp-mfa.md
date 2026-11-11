@@ -117,8 +117,22 @@ replayed at sign-in.
   `regenerateRecoveryCodes` method (Identity regenerates with `@munaxa/crypto` `recoveryCode` and the
   same `sha256` Platform uses), and a context-bound `protectSecret`.
 - Sessions that existed before an account became privileged under `MFA_POLICY` stay valid until
-  they expire or are revoked. Enabling enforcement should be followed by revoking the affected
-  accounts' sessions (`docs/runbooks/mfa.md`).
-- A person who holds a required account's password but has never enrolled can enrol their own
-  authenticator (trust on first enrollment). That is inherent to self-service enrollment; accounts
-  should be enrolled by their holders promptly after creation.
+  they expire or are revoked. Enrolling at sign-in ends them; for everyone else, enabling
+  enforcement is followed by `operator-cli sessions-revoke-unsatisfied` (`docs/runbooks/mfa.md`).
+- **Trust on first enrollment.** Until an account has a factor, the password is the only thing that
+  proves who is enrolling. A person who holds a covered account's password but has never enrolled
+  can therefore enroll _their own_ authenticator, through the enrollment challenge or from a
+  session, and from then on the factor protects them rather than the owner. This is inherent to
+  self-service enrollment and is accepted with these mitigations, which the production readiness
+  checklist requires:
+  - privileged accounts are enrolled by their holders at provisioning, before the account is
+    handed over or its password could have been exposed, and the window between creating an
+    account and its enrollment is kept short;
+  - once a factor exists, replacing or removing it needs that factor (reauthentication), so a
+    later attacker with only the password cannot take the factor over;
+  - every enrollment writes `auth.mfa.enrolled` (with `replaced`) to the audit chain, and
+    enrollments of privileged accounts should be reviewed against provisioning records;
+  - the only way to strip a factor without it is the operator `mfa-reset`, behind out-of-band
+    identity verification and a second operator (ADR-0006).
+    An administrator-issued enrollment (a one-time enrollment code delivered out of band) would close
+    the window entirely; it needs the administration API Identity does not yet have.

@@ -17,6 +17,11 @@ treating a secret as configuration is how it ends up in Git.
 | `PLATFORM_PACKAGES_TOKEN`      | GitHub Actions | Actions secret                      | Read access to `@munaxa/*` packages. Revoke and reissue; no runtime impact.                                                                                                                                              |
 | The first operator's password  | a person       | typed at a prompt                   | One account. Change it. It is never in Git, never echoed, and never in shell history if the runbook is followed.                                                                                                         |
 
+**Before any image built after release `5277d71` runs in production**, `MFA_ENCRYPTION_KEYS_FILE`
+must exist: production refuses to start without it. It is a new secret, generated where it is
+stored, and is never derived from or equal to either signing secret.
+[Production readiness](../production-readiness.md) lists it with everything else that image needs.
+
 Identity's five are **files**, not environment variables, and that is the point of the `*_FILE`
 convention: an environment variable is visible to `docker inspect`, to every process in the
 container, and to any crash reporter that dumps the environment.
@@ -31,6 +36,9 @@ container, and to any crash reporter that dumps the environment.
 | `PLATFORM_AUTH_ALGORITHM`                                             | `ES256`.                                                                                                                 |
 | `PLATFORM_AUTH_PUBLIC_KEYS`                                           | The **public** half. It verifies; it cannot sign. Publishing it is what a JWKS endpoint would do, and Platform has none. |
 | `IDENTITY_SIGNING_KID`                                                | A key's name, in every token header.                                                                                     |
+| `MFA_ENCRYPTION_PRIMARY_KID`                                          | A key's name, in every stored envelope.                                                                                  |
+| `MFA_POLICY`, `MFA_PRIVILEGED_ROLES`, `MFA_*` limits and windows      | Policy. Wrong is a lock-out or a weaker policy, never a disclosure.                                                      |
+| `IDENTITY_PASSWORD_RESET` and the reset/email settings                | `disabled` in production until a production email transport exists.                                                      |
 | `WORK_API_URL`, `IDENTITY_DEFAULT_ORGANISATION`, image tags, versions | Deployment topology.                                                                                                     |
 
 Getting one of these wrong produces a 401 on every request with nothing in the log to explain it —

@@ -57,10 +57,19 @@ Configuration: `MFA_POLICY` (`off`/`privileged`/`all`), `MFA_PRIVILEGED_ROLES`, 
      revokes every session the account held (reason `mfa-changed`) before the new, MFA-satisfied
      session is created. Enrolling from a session revokes every other session the same way.
    - **An account that does not sign in again** keeps its pre-enforcement sessions until they
-     expire. To end them immediately, the person signs out other sessions
-     (`POST /api/auth/sessions/revoke-others`), or an operator revokes them. A reviewed
-     operator command for that is part of the production hardening work; until it exists, do not
-     treat enforcement as complete for an account until its pre-enforcement sessions have expired.
+     expire. End them with the operator command, run with the same `MFA_POLICY` and
+     `MFA_PRIVILEGED_ROLES` as the service, first as a dry run and then with `--apply`:
+
+     ```text
+     operator-cli sessions-revoke-unsatisfied --organisation <key>
+     operator-cli sessions-revoke-unsatisfied --organisation <key> --reference CHG-123 --apply
+     ```
+
+     It revokes (reason `admin-revoked`) every live session with `mfa_satisfied = false` of every
+     account the policy covers, leaves MFA-satisfied sessions and uncovered accounts alone, and
+     writes one `session.revoked` audit record per account carrying the reference. Enforcement is
+     complete for an organisation when the dry run reports zero.
+
    - Downstream services that need assurance should require the `mfa: true` claim rather than
      assume that enforcement covers every live session.
 
@@ -102,12 +111,13 @@ Zero-downtime and two-phase, because every envelope and every recovery-code hash
    `MFA_ENCRYPTION_KEYS=mfa-2026-11=<old>,mfa-2027-05=<new>`, `MFA_ENCRYPTION_PRIMARY_KID=mfa-2027-05`.
    Deploy. New enrollments and new recovery codes use the new key; existing secrets and codes keep
    working under the old one.
-2. **Re-encrypt.** Run `PrismaMfaEnrollmentStore.reencryptTenant` for every organisation (the
-   rotation task, `pnpm --filter @identity/api mfa:reencrypt`, added with the production hardening).
-   Each secret is decrypted with its own AAD and re-sealed under the primary; a row replaced
+2. **Re-encrypt.** For every organisation, with the new configuration:
+   `operator-cli mfa-reencrypt --organisation <key>` (dry run: how many secrets are not under the
+   primary), then the same with `--reference <change id> --apply`, which writes
+   `crypto.key.rotated` with the counts. Each secret is decrypted with its own AAD and re-sealed under the primary; a row replaced
    concurrently is skipped, not overwritten. A row that fails to authenticate is counted, left
    alone and never printed — investigate it as possible tampering.
-3. **Recovery codes.** Hashes cannot be re-keyed without the code. `recoveryCodesUnderRetiredKeys`
+3. **Recovery codes.** Hashes cannot be re-keyed without the code. `mfa-reencrypt` also
    reports how many unspent codes still name the old kid. Either keep the old entry until those
    people regenerate their codes, or accept that those codes stop working when the key is retired
    (the TOTP factor is unaffected).
@@ -117,6 +127,61 @@ Zero-downtime and two-phase, because every envelope and every recovery-code hash
 **If a key leaks**, do all four steps at once: a leaked key opens secrets only together with a
 database dump, but there is no way to know whether one was taken, so treat every secret sealed under
 it as exposed and ask affected people to re-enroll after the rotation.
+
+## Operator commands
+
+Identity has no administration API. The steps above and the lost-device procedure below are one-off
+commands in the Identity image, `node dist/ops/operator-cli.js <command>` (`pnpm ops <command>` in a
+checkout). Run them as a one-off task of the **Identity service definition**, so they use its
+configuration, its mounted secrets and its `identity_app` connection, under the same row-level
+security and audit chain as the service. Never pass a secret, a password or a database URL on the
+command line or as a task override: overrides are recorded in plain text.
+
+| Command                       | Changes                                                                                 | Needs                                           |
+| ----------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `mfa-reset`                   | Removes a factor and its recovery codes; bumps the token version; revokes every session | `--organisation`, `--account-id`, `--reference` |
+| `account-disable`             | Disables the account; bumps the token version; revokes every session                    | `--organisation`, `--account-id`, `--reference` |
+| `sessions-revoke-unsatisfied` | Revokes pre-enforcement (`mfa_satisfied = false`) sessions of covered accounts          | `--organisation`, `--reference`                 |
+| `mfa-reencrypt`               | Re-seals TOTP secrets under the primary key; audits `crypto.key.rotated`                | `--organisation`, `--reference`                 |
+
+Every command is a dry run without `--apply`. `--reference` is a ticket or incident id (letters,
+digits, `. _ : -`; never a name or an email) and is carried into the audit record as the actor,
+`operator:<reference>`. Output names accounts by id only. Prefer `--account-id` to
+`--account <identifier>`: the arguments of a one-off task are recorded in CloudTrail, and an
+identifier is an email address. Look the id up from the ticket's account record, not by pasting
+the identifier into the task.
+
+## Lost device (operator recovery)
+
+The person has lost their authenticator and their recovery codes. `mfa-reset` removes the factor;
+**it does not establish who is asking, and the procedure around it is the whole of its security**,
+because after a reset the account belongs to whoever holds the password.
+
+1. **Open a ticket** and record the request. Never accept the request in the same channel the
+   attacker would use (an email from the account's own address proves nothing).
+2. **Verify identity out of band** against something the attacker would not have: a call to a
+   number on file that predates the request, the person's manager confirming in person or on a
+   known channel, or an in-person check. For a privileged account, two people verify.
+3. **A second operator approves** the ticket before anything runs. The person who verified is not
+   the person who runs the command.
+4. **Dry run**, check that the account id is the one in the ticket:
+   `operator-cli mfa-reset --organisation <key> --account-id <id>`.
+5. **Apply**: the same with `--reference <ticket> --apply`. This removes the TOTP factor (active
+   and pending) and every recovery code, bumps the token version (every access token stops
+   verifying at the next check) and revokes every session and refresh lineage first, then removes
+   the factor, then writes `auth.mfa.removed` with `operator:<ticket>`. If it fails part-way the
+   account is left signed out everywhere with its factor intact; run the same command again.
+6. **If the password may also be known to someone else**, do not hand the account back on it.
+   Where password reset is enabled, the person resets it (`/api/auth/password/forgot`) before
+   signing in. Where it is disabled (production, until email delivery exists), run
+   `operator-cli account-disable --organisation <key> --account-id <id> --reference <ticket>
+--apply` instead and re-establish the account through provisioning. Otherwise the person signs in
+   with the password and, if policy covers them, is admitted only to enrollment and enrolls a new
+   device straight away.
+7. **Close the ticket** with the command's output line and the time.
+
+The reset never touches the password, and a password reset never touches MFA (ADR-0005), so neither
+recovery path can be used to strip the other factor.
 
 ## Failure modes
 
