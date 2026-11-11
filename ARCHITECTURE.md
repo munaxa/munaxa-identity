@@ -77,6 +77,22 @@ One token carries one organisation's permission context — `PermissionResolver.
 session spans organisations and the access token does not: `/auth/refresh` takes an optional target
 organisation and re-issues.
 
+## Second factor, recovery and sessions
+
+- **MFA** (ADR-0005): TOTP from Platform's `MfaService`, secrets sealed under a dedicated key ring
+  and bound to their account, recovery codes stored as keyed hashes. A right password for an
+  account that needs a factor yields an opaque single-use challenge (`__Host-mx_mfa`, in Redis),
+  never a session; `MFA_POLICY` decides who needs one. Changing or removing a factor, regenerating
+  recovery codes and changing the password need a recent reauthentication with the factor.
+- **Password recovery** (`docs/runbooks/password-recovery.md`): one-time links, completed in one
+  transaction that also ends every session. It never changes or removes a factor, and it never
+  signs the person in. Disabled in production until a production email transport exists.
+- **Sessions** (`docs/runbooks/revocation.md`): people list and revoke their own sessions;
+  revocation is one-way and refresh re-checks it.
+- **Operator commands** (ADR-0006): lost-device reset, account disable, ending pre-enforcement
+  sessions and MFA key re-encryption run as one-off tasks of the service through the same code,
+  row-level security and audit chain. There is no administration API.
+
 ## What is deliberately absent
 
 **No `SECURITY DEFINER` function, and no resolver role.** Munaxa Work needs both, because it must

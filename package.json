@@ -25,7 +25,8 @@
     "keys:generate": "pnpm --filter @identity/api keys:generate",
     "check:catalogue-drift": "pnpm --filter @identity/api check:catalogue-drift",
     "prisma:validate": "prisma validate",
-    "catalogue:refresh": "pnpm --filter @identity/api catalogue:refresh"
+    "catalogue:refresh": "pnpm --filter @identity/api catalogue:refresh",
+    "ops": "pnpm --filter @identity/api ops"
   },
   "devDependencies": {
     "prettier": "^3.4.2",

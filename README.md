@@ -67,6 +67,7 @@ The last command prints the account's `sub`. That value is what Munaxa Work need
 - [**Architecture**](./ARCHITECTURE.md) — ownership, the flow, tenancy, and what is deliberately absent.
 - [**Decisions**](./docs/adr) — the choices that would otherwise be re-litigated.
 - [**Runbooks**](./docs/runbooks) — provisioning, key rotation, revocation, rollback.
+- [**Production readiness**](./docs/production-readiness.md) — what must be true before an image built from `main` runs in production.
 - [**Artifacts**](./artifacts) — Munaxa Work's permission catalogue, and why it is a file.
 - [**Secrets**](./docs/runbooks/secrets.md) — what is secret, what is only configuration, and why.
 - [**AWS**](./docs/runbooks/aws.md) — the shared AWS stack (draft): images, the migrate task and configuration.
@@ -76,13 +77,16 @@ The last command prints the account's `sub`. That value is what Munaxa Work need
 
 Stated here rather than discovered later.
 
-- **MFA is not implemented.** `@munaxa/auth` provides it; this service does not yet wire it. Staging
-  is safe without it — lockout, rate limiting and password policy are all live — and it is a
-  production requirement, not an optional extra. See `docs/adr/0003-mfa-deferred.md`.
+- **MFA enforcement is off by default.** TOTP MFA is implemented (ADR-0005) and production requires
+  its key ring, but who must use it is `MFA_POLICY`, which defaults to `off`. The production target
+  is `privileged`: [production readiness](./docs/production-readiness.md).
 - **Revocation reaches Munaxa Work only when the access token expires**, up to about 16½ minutes.
   This is a property of the architecture, not a defect, and it is measured rather than assumed:
   `docs/runbooks/revocation.md`.
-- **Password reset has a store and a conformance-tested adapter but no endpoint.** The flow is a
-  later slice; the store exists because that is what the conformance suite validates.
+- **Password reset is implemented but cannot be enabled in production yet.** There is no
+  production email transport, so production requires `IDENTITY_PASSWORD_RESET=disabled`
+  ([password recovery](./docs/runbooks/password-recovery.md)).
+- **There is no administration API.** Operator recovery (lost MFA device, account disable,
+  enforcement roll-out, key re-encryption) is one-off commands: ADR-0006.
 - **Federation is not wired.** The account model carries `identity_source` and `external_id` from
   the first migration so adopting an external provider later is not a backfill.
