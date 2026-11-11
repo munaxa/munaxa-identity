@@ -98,3 +98,37 @@ export const clearSessionCookies = (response: Response): void => {
     clearCookie(REFRESH_COOKIE, REFRESH_PATH),
   ]);
 };
+
+/**
+ * The pending second-factor challenge.
+ *
+ * `__Host-` (Secure, Path=/, no Domain, enforced by the browser), `HttpOnly`, and `SameSite=Strict`:
+ * it is only ever sent by a same-site form or fetch to the MFA routes, never on a cross-site
+ * navigation. Short-lived by `Max-Age` as well as by its server-side TTL. Its value is an opaque
+ * random token that no verifier accepts as an access token.
+ */
+export const MFA_CHALLENGE_COOKIE = '__Host-mx_mfa';
+
+export const issueChallengeCookie = (
+  response: Response,
+  token: string,
+  ttlSeconds: number,
+): void => {
+  setCookies(response, [
+    {
+      name: MFA_CHALLENGE_COOKIE,
+      value: token,
+      options: {
+        path: '/',
+        maxAgeSeconds: ttlSeconds,
+        secure: true,
+        httpOnly: true,
+        sameSite: 'strict',
+      },
+    },
+  ]);
+};
+
+export const clearChallengeCookie = (response: Response): void => {
+  setCookies(response, [clearCookie(MFA_CHALLENGE_COOKIE, '/')]);
+};

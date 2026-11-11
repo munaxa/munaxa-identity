@@ -46,6 +46,9 @@ export class PasswordChangeController {
       case 'invalid-current-password':
         response.status(401).json({ code: 'AUTH_INVALID_CREDENTIALS' });
         return;
+      case 'reauthentication-required':
+        response.status(403).json({ code: 'AUTH_REAUTHENTICATION_REQUIRED' });
+        return;
       case 'password-rejected':
         response.status(422).json({ code: outcome.code, violations: outcome.violations });
         return;

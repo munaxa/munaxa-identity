@@ -6,6 +6,7 @@ import {
   duration,
   extendConfig,
   integer,
+  list,
   oneOf,
   parseConfig,
   pickSchema,
@@ -178,6 +179,34 @@ export const IDENTITY_SCHEMA = extendConfig(
     MFA_ENCRYPTION_KEYS: string({ secret: true, default: '', minLength: 0 }),
     /** Which entry of `MFA_ENCRYPTION_KEYS` new secrets are sealed under. Not secret. */
     MFA_ENCRYPTION_PRIMARY_KID: string({ default: '' }),
+
+    /**
+     * Who must have a second factor to sign in.
+     *
+     * `off` — MFA is optional: anyone may enrol, and an enrolled account is always challenged.
+     * `privileged` — accounts holding any role in `MFA_PRIVILEGED_ROLES` must use MFA; one that has
+     * not enrolled is admitted only to enrolment (see ADR-0005).
+     * `all` — every password account must use MFA.
+     *
+     * Machine identities never sign in through this form (they use client credentials or API keys
+     * against the consuming product), so no policy here can force one through TOTP. There is no
+     * exempt account and no bypass flag: the policy is the same for everybody it names.
+     */
+    MFA_POLICY: oneOf(['off', 'privileged', 'all'] as const, { default: 'off' }),
+    /** Role keys whose holders count as privileged under `MFA_POLICY=privileged`. */
+    MFA_PRIVILEGED_ROLES: list({ default: [] }),
+    /** How long the sign-in second-factor challenge lives after the password is accepted. */
+    MFA_CHALLENGE_TTL: duration({ default: 5 * 60 * 1_000 }),
+    /** How long the enrolment-only challenge lives when policy requires MFA and none is enrolled. */
+    MFA_ENROLLMENT_CHALLENGE_TTL: duration({ default: 10 * 60 * 1_000 }),
+    /** Wrong codes accepted against one challenge before it is destroyed. */
+    MFA_CHALLENGE_MAX_ATTEMPTS: integer({ default: 5, min: 1, max: 10 }),
+    /** Wrong codes accepted per account, across challenges, before second-factor checks lock. */
+    MFA_ACCOUNT_MAX_FAILURES: integer({ default: 10, min: 3, max: 50 }),
+    /** How recent a password (plus code, when enrolled) must be for enrol, replace, remove. */
+    MFA_REAUTH_WINDOW: duration({ default: 5 * 60 * 1_000 }),
+    /** The issuer label an authenticator app shows next to the account. */
+    MFA_ISSUER: string({ default: 'Munaxa' }),
     /**
      * What a person's session list shows about where each session came from.
      *
@@ -234,6 +263,7 @@ export const IDENTITY_SCHEMA = extendConfig(
         });
       }
       issues.push(...mfaKeyIssues(resolved, production));
+      issues.push(...mfaPolicyIssues(resolved));
 
       if (production) {
         if (resolved.MUNAXA_REDIS_URL === '') {
@@ -254,6 +284,49 @@ export const IDENTITY_SCHEMA = extendConfig(
 );
 
 export type IdentityEnvironment = Resolved<typeof IDENTITY_SCHEMA.fields>;
+
+/**
+ * MFA policy that cannot be honoured is refused at startup rather than enforced into a lockout.
+ *
+ * Enforcement without a key ring would leave required accounts with nowhere to enrol, and a
+ * privileged policy with no privileged roles enforces nothing while reading as if it did.
+ */
+function mfaPolicyIssues(resolved: {
+  readonly MFA_POLICY: 'off' | 'privileged' | 'all';
+  readonly MFA_PRIVILEGED_ROLES: readonly string[];
+  readonly MFA_ENCRYPTION_KEYS: string;
+  readonly MFA_CHALLENGE_TTL: number;
+  readonly MFA_ENROLLMENT_CHALLENGE_TTL: number;
+  readonly MFA_REAUTH_WINDOW: number;
+}): { key: string; problem: string }[] {
+  const issues: { key: string; problem: string }[] = [];
+  if (resolved.MFA_POLICY !== 'off' && resolved.MFA_ENCRYPTION_KEYS.trim() === '') {
+    issues.push({
+      key: 'MFA_POLICY',
+      problem: `is ${resolved.MFA_POLICY}, but MFA_ENCRYPTION_KEYS is empty: required accounts would have no way to enrol.`,
+    });
+  }
+  if (resolved.MFA_POLICY === 'privileged' && resolved.MFA_PRIVILEGED_ROLES.length === 0) {
+    issues.push({
+      key: 'MFA_PRIVILEGED_ROLES',
+      problem: 'must name at least one role key when MFA_POLICY=privileged.',
+    });
+  }
+  const bounded = (key: string, value: number, min: number, max: number): void => {
+    if (value < min || value > max) {
+      issues.push({ key, problem: `must be between ${min / 1_000}s and ${max / 1_000}s.` });
+    }
+  };
+  bounded('MFA_CHALLENGE_TTL', resolved.MFA_CHALLENGE_TTL, 60_000, 10 * 60_000);
+  bounded(
+    'MFA_ENROLLMENT_CHALLENGE_TTL',
+    resolved.MFA_ENROLLMENT_CHALLENGE_TTL,
+    60_000,
+    15 * 60_000,
+  );
+  bounded('MFA_REAUTH_WINDOW', resolved.MFA_REAUTH_WINDOW, 60_000, 15 * 60_000);
+  return issues;
+}
 
 /**
  * Everything that can be wrong with the MFA key ring, reported by name and never by value.

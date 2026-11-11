@@ -277,6 +277,39 @@ describe('the MFA key ring', () => {
     expect(JSON.stringify(describeEnvironment(env))).not.toContain(MFA_KEY);
   });
 
+  it('refuses MFA enforcement with nowhere to enrol', () => {
+    expect(() => loadEnvironment({ ...complete, MFA_POLICY: 'all' })).toThrowError(
+      /MFA_POLICY: is all, but MFA_ENCRYPTION_KEYS is empty/,
+    );
+  });
+
+  it('refuses a privileged policy that names no privileged role', () => {
+    expect(() => loadEnvironment({ ...complete, ...MFA, MFA_POLICY: 'privileged' })).toThrowError(
+      /MFA_PRIVILEGED_ROLES: must name at least one role/,
+    );
+    const env = loadEnvironment({
+      ...complete,
+      ...MFA,
+      MFA_POLICY: 'privileged',
+      MFA_PRIVILEGED_ROLES: 'control-operator-admin, work-admin',
+    });
+    expect(env.MFA_PRIVILEGED_ROLES).toEqual(['control-operator-admin', 'work-admin']);
+  });
+
+  it('defaults to a five-minute challenge with five attempts, and bounds the windows', () => {
+    const env = loadEnvironment(complete);
+    expect(env.MFA_POLICY).toBe('off');
+    expect(env.MFA_CHALLENGE_TTL).toBe(300_000);
+    expect(env.MFA_CHALLENGE_MAX_ATTEMPTS).toBe(5);
+    expect(() => loadEnvironment({ ...complete, MFA_CHALLENGE_TTL: '1h' })).toThrowError(
+      /MFA_CHALLENGE_TTL: must be between/,
+    );
+    expect(() => loadEnvironment({ ...complete, MFA_REAUTH_WINDOW: '10s' })).toThrowError(
+      /MFA_REAUTH_WINDOW: must be between/,
+    );
+    expect(() => loadEnvironment({ ...complete, MFA_CHALLENGE_MAX_ATTEMPTS: '50' })).toThrow();
+  });
+
   it('names a primary only when there is a ring', () => {
     expect(() => loadEnvironment({ ...complete, MFA_ENCRYPTION_PRIMARY_KID: 'a' })).toThrowError(
       /MFA_ENCRYPTION_KEYS is empty/,

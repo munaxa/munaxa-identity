@@ -12,6 +12,7 @@ import {
 
 import type { CredentialRevocation } from '../account/credential-revocation.js';
 import { resolvePrincipal } from '../auth/principal.js';
+import type { StepUpCheck } from '../mfa/step-up.js';
 import type { PrismaService } from '../persistence/prisma.service.js';
 import type { SecurityStack } from '../platform/security.js';
 
@@ -39,6 +40,7 @@ export type ChangeOutcome =
   | { readonly kind: 'changed'; readonly revokedSessions: number }
   | { readonly kind: 'unauthenticated' }
   | { readonly kind: 'invalid-current-password' }
+  | { readonly kind: 'reauthentication-required' }
   | {
       readonly kind: 'password-rejected';
       readonly code: string;
@@ -69,6 +71,12 @@ export interface PasswordChangeOptions {
   readonly revocation: Pick<CredentialRevocation, 'revokeAllForUser'>;
   readonly revokeResetLinks: (tenantId: TenantId, userId: UserId) => Promise<number>;
   readonly limiter: RateLimiter;
+  /**
+   * The second-factor step-up (`mfa/step-up.ts`). An account with an active factor must have
+   * reauthenticated on this session within `MFA_REAUTH_WINDOW`; the current password alone is not
+   * enough, because a stolen session plus a phished password would otherwise take the account.
+   */
+  readonly stepUp: StepUpCheck;
   readonly audit: AuditService;
   readonly log?: (level: 'warn' | 'error', event: string, fields: Record<string, unknown>) => void;
 }
@@ -85,6 +93,20 @@ export class PasswordChange {
     const resolution = await resolvePrincipal(this.options.security, input.accessToken);
     if (!resolution.ok) return { kind: 'unauthenticated' };
     const { tenantId, userId, sessionId } = resolution.principal;
+
+    let stepUp;
+    try {
+      stepUp = await this.options.stepUp(resolution.principal);
+    } catch {
+      stepUp = 'unavailable' as const;
+    }
+    if (stepUp === 'unavailable') {
+      this.options.log?.('error', 'auth.password_change.step_up_unavailable', {
+        correlationId: input.correlationId,
+      });
+      return { kind: 'unavailable' };
+    }
+    if (stepUp === 'required') return { kind: 'reauthentication-required' };
 
     const decision = await this.options.limiter.check({
       method: 'POST',

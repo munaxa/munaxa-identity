@@ -15,7 +15,13 @@ import { toCorrelationId, type EpochMillis } from '@munaxa/types';
 import type { IdentityEnvironment } from '@identity/config';
 import type { Logger } from 'pino';
 
+import type { CachePort } from '@munaxa/interfaces';
+
+import { MfaChallenges, MfaFailureCounter } from '../mfa/mfa-challenges.js';
 import { buildMfaKeys } from '../mfa/mfa-keys.js';
+import { MfaPolicy } from '../mfa/mfa-policy.js';
+import { Reauthentication } from '../mfa/reauthentication.js';
+import { createStepUp } from '../mfa/step-up.js';
 import { buildIdentityMfa, type IdentityMfa } from '../mfa/mfa-runtime.js';
 import { AccountLockdown, CredentialRevocation } from '../account/credential-revocation.js';
 import { revocationAuditor, type RevocationAuditor } from '../account/revocation-audit.js';
@@ -81,6 +87,16 @@ export interface SecurityStack {
    * an account already enrolled is then refused at sign-in rather than let through.
    */
   readonly mfa: IdentityMfa | undefined;
+  /** Who must use a second factor (`MFA_POLICY`). */
+  readonly mfaPolicy: MfaPolicy;
+  /** Pending second-factor challenges, in the shared cache. */
+  readonly mfaChallenges: MfaChallenges;
+  /** Wrong second-factor answers per account, across challenges. */
+  readonly mfaFailures: MfaFailureCounter;
+  /** Recent-reauthentication markers, per session. */
+  readonly reauthentication: Reauthentication;
+  /** The shared cache. Exposed for the MFA flow's own keys; everything else goes through a service. */
+  readonly cache: CachePort;
   /** Changing a password while signed in. */
   readonly passwordChange: PasswordChange;
   close(): Promise<void>;
@@ -204,8 +220,13 @@ export const buildSecurityStack = async (
       : {}),
   });
 
+  const mfaPolicy = new MfaPolicy(prisma, environment.MFA_POLICY, environment.MFA_PRIVILEGED_ROLES);
+
   const login = new LoginService({
     directory,
+    // Consulted only for an account with no factor enrolled (an enrolled one is always challenged).
+    // True means "admit to enrollment only", never "admit".
+    requireMfa: (account) => mfaPolicy.requires(account.tenantId, account.userId),
     hasher: defaultPasswordHasher,
     policy,
     cache,
@@ -280,6 +301,7 @@ export const buildSecurityStack = async (
     },
   });
 
+  const reauthentication = new Reauthentication(cache, environment.MFA_REAUTH_WINDOW);
   const passwordChange = new PasswordChange({
     security: { tokens, sessions, directory },
     prisma,
@@ -289,6 +311,12 @@ export const buildSecurityStack = async (
     // the table says so, rather than leaving rows that only fail on use.
     revokeResetLinks: (tenantId, userId) => recovery.revokeOutstanding(tenantId, userId),
     limiter: createChangeLimiter(cache),
+    stepUp: createStepUp({
+      mfa,
+      reauthentication,
+      flaggedEnrolled: async (tenantId, userId) =>
+        (await directory.findById(tenantId, userId))?.mfaEnrolled === true,
+    }),
     audit,
     log: (level, event, fields) => {
       if (logger === undefined) {
@@ -331,6 +359,19 @@ export const buildSecurityStack = async (
     limitEnforcement: sessions.limitEnforcement,
     recovery,
     mfa,
+    mfaPolicy,
+    mfaChallenges: new MfaChallenges(cache, {
+      verifyTtlMs: environment.MFA_CHALLENGE_TTL,
+      enrollTtlMs: environment.MFA_ENROLLMENT_CHALLENGE_TTL,
+      maxAttempts: environment.MFA_CHALLENGE_MAX_ATTEMPTS,
+    }),
+    mfaFailures: new MfaFailureCounter(
+      cache,
+      environment.MFA_ACCOUNT_MAX_FAILURES,
+      environment.MUNAXA_LOGIN_LOCKOUT,
+    ),
+    reauthentication,
+    cache,
     passwordChange,
     close: async () => {
       await recovery.idle();

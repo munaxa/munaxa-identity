@@ -12,6 +12,8 @@ import { AccountSessionsController } from './account/account-sessions.controller
 import { AccountSessionsService } from './account/account-sessions.service.js';
 import { AuthController } from './auth/auth.controller.js';
 import { AuthService } from './auth/auth.service.js';
+import { MfaController } from './mfa/mfa.controller.js';
+import { MfaFlowService } from './mfa/mfa-flow.service.js';
 import { HealthController } from './health/health.controller.js';
 import { PasswordChangeController } from './password/password-change.controller.js';
 import { PasswordRecoveryController } from './password/password-recovery.controller.js';
@@ -33,6 +35,7 @@ import { ENVIRONMENT, LOGGER, SECURITY_STACK } from './tokens.js';
   controllers: [
     AuthController,
     AccountSessionsController,
+    MfaController,
     HealthController,
     PasswordRecoveryController,
     PasswordChangeController,
@@ -40,6 +43,7 @@ import { ENVIRONMENT, LOGGER, SECURITY_STACK } from './tokens.js';
   providers: [
     PrismaService,
     AuthService,
+    MfaFlowService,
     AccountSessionsService,
     EdgeMiddleware,
     RequestLogMiddleware,

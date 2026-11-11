@@ -7,7 +7,13 @@ import { randomUUID } from 'node:crypto';
 import { LOGGER } from '../tokens.js';
 import { signInPage } from '../ui/sign-in.page.js';
 import { AuthService, type LoginFailure } from './auth.service.js';
-import { REFRESH_COOKIE, SESSION_COOKIE, clearSessionCookies, issueCookies } from './cookies.js';
+import {
+  REFRESH_COOKIE,
+  SESSION_COOKIE,
+  clearSessionCookies,
+  issueChallengeCookie,
+  issueCookies,
+} from './cookies.js';
 
 /**
  * The authentication API.
@@ -94,6 +100,25 @@ export class AuthController {
 
     if (!result.ok) {
       this.noteUnavailable(request, result.failure);
+      const challenge =
+        result.failure.kind === 'mfa-required' ? result.failure.challenge : undefined;
+      if (challenge !== undefined) {
+        // The password was right. No session exists yet: only a short-lived challenge cookie the
+        // MFA routes can redeem.
+        issueChallengeCookie(response, challenge.token, Math.ceil(challenge.ttlMs / 1_000));
+        response.setHeader('cache-control', 'no-store');
+        if (form !== undefined) {
+          const language = typeof body.lang === 'string' && body.lang === 'ar' ? 'ar' : 'en';
+          const page = challenge.kind === 'verify' ? '/api/auth/mfa' : '/api/auth/mfa/enroll';
+          response.redirect(303, `${page}?lang=${language}&returnTo=${encodeURIComponent(form)}`);
+          return;
+        }
+        response.status(401).json({
+          code: challenge.kind === 'verify' ? 'AUTH_MFA_REQUIRED' : 'AUTH_MFA_ENROLLMENT_REQUIRED',
+          expiresInSeconds: Math.ceil(challenge.ttlMs / 1_000),
+        });
+        return;
+      }
       if (form !== undefined) {
         // A form post gets a page, not JSON. The reason is carried as a coarse code — the four the
         // page can render — never as a message, and never distinguishing a wrong password from an
@@ -256,7 +281,7 @@ const knownError = (
  * `//`, would make the sign-in page an open redirect — a phishing landing spot on a URL that
  * genuinely starts with our own domain, reached through the one page users are trained to trust.
  */
-const safeReturnTo = (requested: string | undefined): string =>
+export const safeReturnTo = (requested: string | undefined): string =>
   requested !== undefined && requested.startsWith('/') && !requested.startsWith('//')
     ? requested
     : '/';

@@ -27,6 +27,31 @@ Both tables carry `FORCE ROW LEVEL SECURITY` with the `tenant_isolation` policy 
 has. A database check constraint refuses any `secret_ciphertext` that is not an envelope, so a
 plaintext secret cannot be written even by mistake.
 
+## The flows
+
+| Route                                       | Who may call                                   | Effect                                                                                                                         |
+| ------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /api/auth/login`                      | anyone                                         | Right password + factor needed → `401 AUTH_MFA_REQUIRED` or `AUTH_MFA_ENROLLMENT_REQUIRED`, `__Host-mx_mfa` cookie, no session |
+| `GET /api/auth/mfa`, `/api/auth/mfa/enroll` | anyone                                         | The HTML pages for the two challenges                                                                                          |
+| `POST /api/auth/mfa/verify`                 | `verify` challenge                             | TOTP or recovery code → session cookies, `amr`, `mfa: true`                                                                    |
+| `POST /api/auth/reauthenticate`             | session                                        | Password (+ code when enrolled) → reauth marker for this session                                                               |
+| `POST /api/auth/mfa/enrollment`             | session + recent reauth, or `enroll` challenge | Returns the secret and `otpauth://` URI, once                                                                                  |
+| `POST /api/auth/mfa/enrollment/confirm`     | same                                           | Returns 10 recovery codes, once; revokes other sessions; with a challenge, signs in                                            |
+| `POST /api/auth/mfa/recovery-codes`         | session + recent reauth                        | New set of 10; the old set stops working                                                                                       |
+| `DELETE /api/auth/mfa`                      | session + recent reauth                        | Removes the factor unless policy requires it; revokes other sessions                                                           |
+| `GET /api/auth/mfa/status`                  | session                                        | `enrolled`, `required`, `recoveryCodesRemaining`, `available`, `reauthenticated`                                               |
+
+Configuration: `MFA_POLICY` (`off`/`privileged`/`all`), `MFA_PRIVILEGED_ROLES`, `MFA_CHALLENGE_TTL`
+(default 5m, 1–10m), `MFA_ENROLLMENT_CHALLENGE_TTL` (10m, 1–15m), `MFA_CHALLENGE_MAX_ATTEMPTS` (5),
+`MFA_ACCOUNT_MAX_FAILURES` (10 per `LOGIN_LOCKOUT`), `MFA_REAUTH_WINDOW` (5m, 1–15m), `MFA_ISSUER`.
+
+### Turning enforcement on
+
+1. Deploy with the key ring and `MFA_POLICY=off`; let privileged people enrol from their sessions.
+2. Set `MFA_POLICY=privileged` and `MFA_PRIVILEGED_ROLES` (for example `control-operator-admin`).
+   Anyone in those roles without a factor is now admitted only to enrollment at their next sign-in.
+3. Revoke the existing sessions of those accounts so nobody keeps a pre-enforcement session.
+
 ## The key ring
 
 `MFA_ENCRYPTION_KEYS` is `kid=key[,kid=key…]`; each key is 32 random bytes, base64url.
