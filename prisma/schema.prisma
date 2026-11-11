@@ -98,8 +98,10 @@ model IdentityAccount {
   disabledAt          DateTime?      @map("disabled_at") @db.Timestamptz(6)
   version             Int            @default(1)
 
-  tenant      IdentityTenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  assignments IdentityRoleAssignment[]
+  tenant           IdentityTenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  assignments      IdentityRoleAssignment[]
+  mfaEnrollments   IdentityMfaEnrollment[]
+  mfaRecoveryCodes IdentityMfaRecoveryCode[]
 
   @@unique([tenantId, identifierNormalized], map: "uq_identity_account_identifier")
   /// NULLs are distinct in a PostgreSQL unique index, so this binds exactly the federated rows
@@ -257,4 +259,63 @@ model IdentityAuditEvent {
   @@index([tenantId, occurredAt], map: "ix_identity_audit_occurred")
   @@index([tenantId, eventName], map: "ix_identity_audit_event")
   @@map("identity_audit_event")
+}
+
+/// A second factor an account has enrolled, or is enrolling.
+///
+/// Two states, and both can exist at once for the same method: `active` is the factor sign-in
+/// checks, `pending` is a replacement the person has started and not yet proved. Keeping them apart
+/// is the security property. If starting an enrollment overwrote the active factor, anybody holding
+/// a session could switch MFA off by beginning an enrollment and walking away; with two rows the
+/// active factor stays in force until a code from the new one is presented, and only then is it
+/// replaced, in one transaction.
+///
+/// The secret is never stored in the clear. `secret_ciphertext` is an AES-256-GCM envelope from
+/// `@munaxa/crypto`, sealed under a dedicated MFA key ring and bound by additional authenticated
+/// data to the tenant, the account and the method, so a ciphertext copied to another row fails to
+/// decrypt. `key_id` repeats the envelope's key id so a rotation can find what still needs
+/// re-encrypting without decrypting anything.
+model IdentityMfaEnrollment {
+  id               String    @id
+  tenantId         String    @map("tenant_id")
+  accountId        String    @map("account_id")
+  /// The Platform `MfaEnrollment['method']`. Only `totp` is wired today.
+  method           String
+  /// `pending` until confirmed with a valid code, then `active`.
+  state            String
+  secretCiphertext String    @map("secret_ciphertext")
+  keyId            String    @map("key_id")
+  label            String?
+  createdAt        DateTime  @map("created_at") @db.Timestamptz(6)
+  confirmedAt      DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  lastUsedAt       DateTime? @map("last_used_at") @db.Timestamptz(6)
+
+  account IdentityAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, accountId, method, state], map: "uq_identity_mfa_enrollment_state")
+  @@index([tenantId, keyId], map: "ix_identity_mfa_enrollment_key")
+  @@map("identity_mfa_enrollment")
+}
+
+/// One single-use recovery code. Only a keyed hash is stored.
+///
+/// The value Platform hands the store is already a SHA-256 of the code; the store keys it again
+/// with an HMAC under a subkey of the MFA key ring, so a database dump alone cannot be used to test
+/// guesses offline. `key_id` names the ring key that produced the hash, so a code issued before a
+/// rotation still verifies after it. Consumption is one conditional `UPDATE … WHERE consumed_at IS
+/// NULL`: two replicas presented the same code at the same instant cannot both succeed.
+model IdentityMfaRecoveryCode {
+  id         String    @id
+  tenantId   String    @map("tenant_id")
+  accountId  String    @map("account_id")
+  codeHash   String    @map("code_hash")
+  keyId      String    @map("key_id")
+  createdAt  DateTime  @map("created_at") @db.Timestamptz(6)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  account IdentityAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, accountId, keyId, codeHash], map: "uq_identity_mfa_recovery_code")
+  @@index([tenantId, accountId], map: "ix_identity_mfa_recovery_code_account")
+  @@map("identity_mfa_recovery_code")
 }

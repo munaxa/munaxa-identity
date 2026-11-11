@@ -94,10 +94,15 @@ jobs:
           PGPASSWORD: identity
 
       # Applied as the migration role, so the tables are owned by it rather than by a superuser.
+      # Every migration, in the lexical order `prisma migrate deploy` applies them, so a new
+      # migration is exercised by CI the moment it is committed rather than when somebody remembers
+      # to list it here.
       - name: Migrate from zero
         run: |
-          psql "$TEST_DIRECT_DATABASE_URL" -v ON_ERROR_STOP=1 \
-            -f prisma/migrations/20260901120000_identity_baseline/migration.sql
+          for migration in prisma/migrations/*/migration.sql; do
+            echo "Applying $migration"
+            psql "$TEST_DIRECT_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration"
+          done
         env:
           PGPASSWORD: identity_mig
 
@@ -108,7 +113,8 @@ jobs:
             grant select on identity_tenant to identity_app;
             grant select, insert, update, delete on identity_account, identity_session,
               identity_refresh_token, identity_role, identity_role_assignment,
-              identity_reset_token to identity_app;
+              identity_reset_token, identity_mfa_enrollment, identity_mfa_recovery_code
+              to identity_app;
             grant select, insert on identity_audit_event to identity_app;"
         env:
           PGPASSWORD: identity_mig
