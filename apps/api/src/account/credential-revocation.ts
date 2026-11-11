@@ -24,13 +24,12 @@ import type { RevocationAuditor } from './revocation-audit.js';
  * `revoked_at = null`: a revoked row stays revoked whatever else races it.
  *
  * Every write goes through `PrismaService.withTenant`, so it runs under row-level security as the
- * restricted role. Each method is one transaction of its own: `withTenant` always opens a new
- * `$transaction`, so a caller cannot today make a revocation commit atomically with its own writes
- * (a password reset claiming its ticket and changing the password, say). A caller that needs that
- * must provide a shared unit of work and have these writes join it; until one exists, order the
- * calls so a crash between them fails safe — bump the token version first, which already refuses
- * every older token and lineage, then revoke. Nothing here fires work it does not await, so the
- * methods stay safe to run inside such a unit of work once there is one. Audit records are written
+ * restricted role. Called on its own, each method is one transaction. Called inside
+ * `PrismaService.unitOfWork` for the same tenant, `withTenant` joins that enclosing transaction, so
+ * the revocation commits atomically with the caller's own writes — which is how a password reset
+ * and a password change make the ticket claim, the password write, the token-version bump and this
+ * revocation one commit. Nothing here fires work it does not await, because inside a unit of work
+ * a stray promise would meet a closed transaction. Audit records are written
  * by the callers, after the revocation commits (see `revocation-audit.ts`).
  */
 export interface RevocationOutcome {
