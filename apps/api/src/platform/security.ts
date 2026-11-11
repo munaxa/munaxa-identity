@@ -13,6 +13,7 @@ import { RateLimiter, BASELINE_RATE_LIMIT_RULES } from '@munaxa/security';
 import { SessionManager } from '@munaxa/session';
 import { toCorrelationId, type EpochMillis } from '@munaxa/types';
 import type { IdentityEnvironment } from '@identity/config';
+import type { Logger } from 'pino';
 
 import { AccountLockdown, CredentialRevocation } from '../account/credential-revocation.js';
 import { PrismaAuditRepository } from '../persistence/audit-repository.adapter.js';
@@ -23,6 +24,8 @@ import { PrismaSessionStore } from '../persistence/session-store.adapter.js';
 import { PrismaUserDirectory } from '../persistence/user-directory.adapter.js';
 import { TenantDirectory } from '../persistence/tenant-directory.js';
 import type { PrismaService } from '../persistence/prisma.service.js';
+import { emailTransportFor } from '../delivery/email.js';
+import { PasswordRecovery, createResetLimiter } from '../password/password-recovery.js';
 import { openCache, type CacheHandle } from './cache.js';
 import { RoleAdministration } from './role-administration.js';
 import { loadSigningKey, type SigningKey } from './signing.js';
@@ -64,12 +67,15 @@ export interface SecurityStack {
   /** Whether the cache is reachable right now. Readiness asks; see `CacheHandle.reachable`. */
   cacheReachable(): Promise<boolean>;
   readonly limitEnforcement: string;
+  /** Password recovery. Its `availability` says whether the endpoints may be used at all. */
+  readonly recovery: PasswordRecovery;
   close(): Promise<void>;
 }
 
 export const buildSecurityStack = async (
   environment: IdentityEnvironment,
   prisma: PrismaService,
+  logger?: Logger,
 ): Promise<SecurityStack> => {
   const handle: CacheHandle = await openCache(environment.MUNAXA_REDIS_URL);
   const { cache } = handle;
@@ -80,9 +86,7 @@ export const buildSecurityStack = async (
   const roleRepository = new PrismaRoleRepository(prisma);
   const roleAssignments = new PrismaRoleAssignments(prisma);
   const auditRepository = new PrismaAuditRepository(prisma);
-  // Constructed so a reset flow has a store the day it is written, and so the platform's reset
-  // conformance suite runs against a real adapter now rather than after the fact.
-  void new PrismaResetTokenStore(prisma);
+  const resetStore = new PrismaResetTokenStore(prisma);
 
   const audit = new AuditService({ repository: auditRepository });
 
@@ -186,6 +190,37 @@ export const buildSecurityStack = async (
     },
   });
 
+  const recovery = new PasswordRecovery({
+    prisma,
+    store: resetStore,
+    directory,
+    hasher: defaultPasswordHasher,
+    policy,
+    tenants: new TenantDirectory(prisma),
+    // Runs inside the completion's unit of work: `CredentialRevocation` writes through
+    // `withTenant`, which joins it, so the revocation commits with the password change or not at all.
+    revokeCredentials: async (tenantId, userId) => {
+      await revocation.revokeAllForUser(tenantId, userId, 'password-reset');
+    },
+    // Its own limiter, so its rules and its fail-closed handling are its own. Same shared cache.
+    limiter: createResetLimiter(cache),
+    audit,
+    transport: emailTransportFor(environment),
+    enabled: environment.IDENTITY_PASSWORD_RESET === 'enabled',
+    resetUrl: environment.IDENTITY_PASSWORD_RESET_URL.trim(),
+    ttl: environment.IDENTITY_PASSWORD_RESET_TTL,
+    from: environment.IDENTITY_EMAIL_FROM,
+    // The same pepper as refresh tokens: a stolen table cannot be used to look a link up without it.
+    pepper: environment.MUNAXA_SIGNING_SECRET,
+    log: (level, event, fields) => {
+      if (logger === undefined) {
+        process.stderr.write(`[identity] ${event} ${JSON.stringify(fields)}\n`);
+        return;
+      }
+      logger[level]({ event, ...fields }, event);
+    },
+  });
+
   return {
     login,
     directory,
@@ -215,6 +250,10 @@ export const buildSecurityStack = async (
     cacheKind: handle.kind,
     cacheReachable: () => handle.reachable(),
     limitEnforcement: sessions.limitEnforcement,
-    close: () => handle.close(),
+    recovery,
+    close: async () => {
+      await recovery.idle();
+      await handle.close();
+    },
   };
 };

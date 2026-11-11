@@ -5,3 +5,9 @@ export {
   loadEnvironment,
   type IdentityEnvironment,
 } from './environment.js';
+export {
+  IDENTITY_EMAIL_TRANSPORTS,
+  MAX_PASSWORD_RESET_TTL,
+  PRODUCTION_EMAIL_TRANSPORTS,
+  type IdentityEmailTransport,
+} from './password-recovery.js';

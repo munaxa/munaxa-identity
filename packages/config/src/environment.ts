@@ -18,6 +18,8 @@ import {
   type Resolved,
 } from '@munaxa/config';
 
+import { PASSWORD_RECOVERY_FIELDS, passwordRecoveryIssues } from './password-recovery.js';
+
 /**
  * Identity's environment contract.
  *
@@ -173,6 +175,9 @@ export const IDENTITY_SCHEMA = extendConfig(
      * The full address is never returned under either setting.
      */
     IDENTITY_SESSION_LIST_IP: oneOf(['hidden', 'prefix'] as const, { default: 'prefix' }),
+
+    /** Password recovery and email delivery; see `password-recovery.ts`. */
+    ...PASSWORD_RECOVERY_FIELDS,
   },
   {
     refine: (resolved) => {
@@ -228,6 +233,7 @@ export const IDENTITY_SCHEMA = extendConfig(
           issues.push({ key: 'LOG_PRETTY', problem: 'must be false in production.' });
         }
       }
+      issues.push(...passwordRecoveryIssues(resolved));
       return issues;
     },
   },

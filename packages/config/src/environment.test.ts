@@ -131,6 +131,9 @@ describe('production fails closed', () => {
     ...complete,
     NODE_ENV: 'production',
     IDENTITY_BASE_URL: 'https://id.example',
+    // No production email transport exists yet, so production must say recovery is off.
+    // `password-recovery.test.ts` covers what happens when it does not.
+    IDENTITY_PASSWORD_RESET: 'disabled',
   };
 
   it('requires https for the issuer', () => {
