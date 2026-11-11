@@ -71,7 +71,11 @@ export class AccountSessionsService {
    * somebody else, identically: telling those apart would let a caller probe for other people's
    * session ids.
    */
-  public async revoke(accessToken: string | undefined, sessionId: string): Promise<RevokeOutcome> {
+  public async revoke(
+    accessToken: string | undefined,
+    sessionId: string,
+    correlationId?: string,
+  ): Promise<RevokeOutcome> {
     const resolved = await resolvePrincipal(this.security, accessToken);
     if (!resolved.ok) return UNAUTHENTICATED;
     const { principal } = resolved;
@@ -84,11 +88,23 @@ export class AccountSessionsService {
       'logout',
     );
     if (!revoked) return { ok: false, reason: 'not-found' };
-    return { ok: true, current: sessionId === principal.sessionId };
+    const current = sessionId === principal.sessionId;
+    await this.security.revocationAudit({
+      name: 'session.revoked',
+      tenantId: principal.tenantId,
+      actor: { kind: 'user', id: principal.userId },
+      subject: principal.userId,
+      correlationId,
+      payload: { reason: 'logout', scope: 'one', sessionId, current },
+    });
+    return { ok: true, current };
   }
 
   /** Sign out every session but the one making the request. */
-  public async revokeOthers(accessToken: string | undefined): Promise<RevokeOthersOutcome> {
+  public async revokeOthers(
+    accessToken: string | undefined,
+    correlationId?: string,
+  ): Promise<RevokeOthersOutcome> {
     const resolved = await resolvePrincipal(this.security, accessToken);
     if (!resolved.ok) return UNAUTHENTICATED;
     const { principal } = resolved;
@@ -99,6 +115,20 @@ export class AccountSessionsService {
       principal.sessionId,
       'logout-all',
     );
+    await this.security.revocationAudit({
+      name: 'session.revoked',
+      tenantId: principal.tenantId,
+      actor: { kind: 'user', id: principal.userId },
+      subject: principal.userId,
+      correlationId,
+      payload: {
+        reason: 'logout-all',
+        scope: 'others',
+        keptSessionId: principal.sessionId,
+        sessions: outcome.sessions,
+        refreshTokens: outcome.refreshTokens,
+      },
+    });
     return { ok: true, revoked: outcome.sessions };
   }
 }

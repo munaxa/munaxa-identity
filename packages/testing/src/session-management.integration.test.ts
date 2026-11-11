@@ -10,6 +10,7 @@ import { APPLICATION_URL, OWNER_URL, createOrganisation } from './index.js';
 import { loadEnvironment, type IdentityEnvironment } from '../../config/src/index.js';
 import { AccountSessionsController } from '../../../apps/api/src/account/account-sessions.controller.js';
 import { AccountSessionsService } from '../../../apps/api/src/account/account-sessions.service.js';
+import { revocationAuditor } from '../../../apps/api/src/account/revocation-audit.js';
 import { resolvePrincipal } from '../../../apps/api/src/auth/principal.js';
 import { AuthService } from '../../../apps/api/src/auth/auth.service.js';
 import { PrismaService } from '../../../apps/api/src/persistence/prisma.service.js';
@@ -751,5 +752,111 @@ describe('the HTTP surface', () => {
     const answer = fakeResponse();
     await controller.list(request(signedIn.access), answer.response);
     expect(answer.captured).toMatchObject({ status: 503, body: { code: 'AUTH_UNAVAILABLE' } });
+  });
+});
+
+describe('the audit trail of a revocation', () => {
+  const eventsFor = async (tenantId: TenantId, subject: UserId) =>
+    asOwner<{ event_name: string; event: Record<string, unknown> }>(
+      tenantId,
+      `select event_name, event from identity_audit_event
+        where event->'target'->>'id' = $1 order by sequence`,
+      [subject],
+    );
+
+  it('records revoking one session and revoking the others, with no secrets in it', async () => {
+    const frank = `frank-${randomUUID().slice(0, 6)}@example.test`;
+    const frankId = await createPerson(orgA.id, frank);
+    const current = await signIn(orgA, frank, {
+      ipAddress: '203.0.113.5',
+      userAgent: 'Firefox/131.0',
+    });
+    const other = await signIn(orgA, frank);
+    const third = await signIn(orgA, frank);
+
+    await sessions.revoke(current.access, other.sessionId, 'corr-revoke-one');
+    await sessions.revokeOthers(current.access, 'corr-revoke-others');
+
+    const events = await eventsFor(orgA.id, frankId);
+    const revoked = events.filter((row) => row.event_name === 'session.revoked');
+    expect(revoked).toHaveLength(2);
+    expect(revoked[0]?.event).toMatchObject({
+      correlationId: 'corr-revoke-one',
+      actor: { kind: 'user', id: frankId },
+      payload: { reason: 'logout', scope: 'one', sessionId: other.sessionId, current: false },
+    });
+    expect(revoked[1]?.event).toMatchObject({
+      correlationId: 'corr-revoke-others',
+      payload: {
+        reason: 'logout-all',
+        scope: 'others',
+        keptSessionId: current.sessionId,
+        sessions: 1,
+      },
+    });
+
+    const serialised = JSON.stringify(events);
+    for (const secret of [
+      current.access,
+      current.refresh,
+      other.refresh,
+      third.refresh,
+      '203.0.113.5',
+    ]) {
+      expect(serialised).not.toContain(secret);
+    }
+  });
+
+  it('records nothing for a refused revocation of somebody else’s session', async () => {
+    const grace = `grace-${randomUUID().slice(0, 6)}@example.test`;
+    const graceId = await createPerson(orgA.id, grace);
+    const target = await signIn(orgA, grace);
+    const bobs = await signIn(orgA, BOB);
+    await sessions.revoke(bobs.access, target.sessionId);
+    expect(await eventsFor(orgA.id, graceId)).toHaveLength(0);
+  });
+
+  it('records account disablement and suspected compromise with their actor', async () => {
+    const heidi = `heidi-${randomUUID().slice(0, 6)}@example.test`;
+    const heidiId = await createPerson(orgA.id, heidi);
+    await signIn(orgA, heidi);
+    await security.lockdown.suspectedCompromise(orgA.id, heidiId);
+    await signIn(orgA, heidi);
+    await security.lockdown.disable(orgA.id, heidiId, { kind: 'user', id: 'admin-1' });
+
+    const events = (await eventsFor(orgA.id, heidiId)).filter((row) =>
+      ['session.revoked', 'auth.account.locked'].includes(row.event_name),
+    );
+    expect(events.map((row) => row.event_name)).toEqual(['session.revoked', 'auth.account.locked']);
+    expect(events[0]?.event).toMatchObject({
+      actor: { kind: 'system', id: 'system:lockdown' },
+      payload: { reason: 'risk-detected', scope: 'all', sessions: 1 },
+    });
+    expect(events[1]?.event).toMatchObject({
+      actor: { kind: 'user', id: 'admin-1' },
+      payload: { reason: 'account-disabled', sessions: 1 },
+    });
+  });
+
+  it('does not undo a revocation when the audit sink fails', async () => {
+    const ivan = `ivan-${randomUUID().slice(0, 6)}@example.test`;
+    const ivanId = await createPerson(orgA.id, ivan);
+    const current = await signIn(orgA, ivan);
+    const other = await signIn(orgA, ivan);
+    const failing = new AccountSessionsService(
+      {
+        ...security,
+        revocationAudit: revocationAuditor({ write: () => Promise.reject(new Error('sink down')) }),
+      } as never,
+      environment,
+    );
+    expect(await failing.revoke(current.access, other.sessionId)).toEqual({
+      ok: true,
+      current: false,
+    });
+    expect(await sessionRow(orgA.id, other.sessionId)).toMatchObject({
+      revocation_reason: 'logout',
+    });
+    void ivanId;
   });
 });

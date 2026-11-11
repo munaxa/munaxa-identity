@@ -18,6 +18,7 @@ import type { Logger } from 'pino';
 import { buildMfaKeys } from '../mfa/mfa-keys.js';
 import { buildIdentityMfa, type IdentityMfa } from '../mfa/mfa-runtime.js';
 import { AccountLockdown, CredentialRevocation } from '../account/credential-revocation.js';
+import { revocationAuditor, type RevocationAuditor } from '../account/revocation-audit.js';
 import { PrismaAuditRepository } from '../persistence/audit-repository.adapter.js';
 import { PrismaRefreshTokenStore } from '../persistence/refresh-token-store.adapter.js';
 import { PrismaResetTokenStore } from '../persistence/reset-token-store.adapter.js';
@@ -59,6 +60,8 @@ export interface SecurityStack {
   tokensAt(token: string): TokenService;
   /** Account disablement and the suspected-compromise response. */
   readonly lockdown: AccountLockdown;
+  /** Records a user- or system-initiated revocation after it commits. Never throws. */
+  readonly revocationAudit: RevocationAuditor;
   readonly resolver: PermissionResolver;
   readonly roles: RoleAdministration;
   readonly audit: AuditService;
@@ -281,7 +284,8 @@ export const buildSecurityStack = async (
     refreshTokens,
     sessions,
     revocation,
-    lockdown: new AccountLockdown(directory, revocation),
+    lockdown: new AccountLockdown(directory, revocation, revocationAuditor(audit)),
+    revocationAudit: revocationAuditor(audit),
     tokensAt: (token: string) => {
       const issuedAt = tokens.decodeUnsafe(token)?.iat;
       return new TokenService({

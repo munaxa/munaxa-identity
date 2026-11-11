@@ -28,18 +28,27 @@ Every user-facing revocation goes through `CredentialRevocation`
 (`apps/api/src/account/credential-revocation.ts`), which revokes the `identity_session` row **and**
 every refresh token bound to it in one transaction, with the account id in the `WHERE` clause.
 
-| Trigger                                                   | What is revoked                                     | Reason recorded    |
-| --------------------------------------------------------- | --------------------------------------------------- | ------------------ |
-| `POST /api/auth/logout`                                   | the caller's session and its lineage                | `logout`           |
-| `DELETE /api/auth/sessions/:id` (own session only)        | that session and its lineage                        | `logout`           |
-| `POST /api/auth/sessions/revoke-others`                   | every other session of the caller, and lineages     | `logout-all`       |
-| Password reset (`revokeAllForUser`)                       | every session and refresh token of the account      | `password-reset`   |
-| Password change (`revokeAllForUser`)                      | the same; optionally keeping the changing session   | `password-changed` |
-| MFA removal or replacement (`revokeAllForUser`, `except`) | every other session                                 | `mfa-changed`      |
-| Refresh token replayed                                    | the lineage (Platform) and its session (Identity)   | `token-reuse`      |
-| `AccountLockdown.suspectedCompromise`                     | token version bumped, everything revoked            | `risk-detected`    |
-| `AccountLockdown.disable`                                 | status disabled, version bumped, everything revoked | `account-disabled` |
-| Refresh after a token-version bump                        | the lineage and its session                         | `password-changed` |
+| Trigger                                                    | What is revoked                                     | Reason recorded    |
+| ---------------------------------------------------------- | --------------------------------------------------- | ------------------ |
+| `POST /api/auth/logout`                                    | the caller's session and its lineage                | `logout`           |
+| `DELETE /api/auth/sessions/:id` (own session only)         | that session and its lineage                        | `logout`           |
+| `POST /api/auth/sessions/revoke-others`                    | every other session of the caller, and lineages     | `logout-all`       |
+| Password reset (`revokeAllForUser`)¹                       | every session and refresh token of the account      | `password-reset`   |
+| Password change (`revokeAllForUser`)¹                      | the same; optionally keeping the changing session   | `password-changed` |
+| MFA removal or replacement (`revokeAllForUser`, `except`)¹ | every other session                                 | `mfa-changed`      |
+| Refresh token replayed                                     | the lineage (Platform) and its session (Identity)   | `token-reuse`      |
+| `AccountLockdown.suspectedCompromise`                      | token version bumped, everything revoked            | `risk-detected`    |
+| `AccountLockdown.disable`                                  | status disabled, version bumped, everything revoked | `account-disabled` |
+| Refresh after a token-version bump                         | the lineage and its session                         | `password-changed` |
+
+¹ The hook exists and is tested, but on main nothing calls it yet: the password-reset,
+password-change and MFA flows that will call it are separate changes. Until they merge, these rows
+describe the contract those flows must follow, not behaviour the service has today.
+
+Every row a user or the system initiates through `AccountSessionsService` or `AccountLockdown`
+also writes an audit record (`session.revoked`, or `auth.account.locked` for a disablement) after
+the revocation commits, outside its transaction: counts, reason and session id, never a token, an
+address or a user-agent. A failing audit sink is reported and does not undo the revocation.
 
 Two properties hold whatever races what:
 
