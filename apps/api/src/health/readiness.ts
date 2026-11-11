@@ -16,6 +16,11 @@ import type { SecurityStack } from '../platform/security.js';
 export const REQUIRED_TABLES: readonly string[] = [
   'identity_account',
   'identity_audit_event',
+  // From 20261111130000_identity_mfa. Without them the service would pass readiness and then fail
+  // every MFA, step-up and password-change request; a new image must not take traffic before that
+  // migration has run (docs/production-readiness.md, section 3).
+  'identity_mfa_enrollment',
+  'identity_mfa_recovery_code',
   'identity_refresh_token',
   'identity_reset_token',
   'identity_role',

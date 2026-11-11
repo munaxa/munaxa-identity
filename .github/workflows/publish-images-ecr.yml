@@ -5,7 +5,7 @@
 #   munaxa-identity/migrate  apps/api/Dockerfile, target migrate (the release job)
 #
 # publish-images.yml (GHCR, for Render) is left as it is until the AWS deployment is validated and
-# Render is retired; both run on an image/* tag until then.
+# Render is retired. Only this workflow runs on an image/* tag; the GHCR one is dispatch-only (#6).
 #
 # **Tag-triggered, and the tag names the commit.** A tag `image/<40-hex commit SHA>` on a commit
 # that is on `main`. The jobs that touch ECR run in the protected `image-release` environment and

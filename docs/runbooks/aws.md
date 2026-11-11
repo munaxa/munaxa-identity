@@ -55,6 +55,20 @@ The plain environment is set in the stack's `services.tf`: `NODE_ENV=production`
 `IDENTITY_SIGNING_KID`, `IDENTITY_DEFAULT_ORGANISATION`, `CSRF_TRUSTED_ORIGINS` (Identity, Work
 and the operator host), `LOG_PRETTY=false` and `TRUST_PROXY_HOPS=1`.
 
+**That list is enough for release `5277d71` only.** An image built from a later commit (the security
+hardening, #7 to #13) refuses to start under `NODE_ENV=production` without three more, and the
+stack does not set any of them yet (`docs/production-readiness.md`):
+
+- `MFA_ENCRYPTION_KEYS` in the `<env>/identity` bundle (secret; ECS injects it as an environment
+  variable, which `@identity/config` accepts as well as `MFA_ENCRYPTION_KEYS_FILE`).
+- `MFA_ENCRYPTION_PRIMARY_KID` in the plain environment (not secret).
+- `IDENTITY_PASSWORD_RESET=disabled` in the plain environment. Its default is `enabled`, which
+  production refuses because no production email transport exists.
+
+The same image also needs migration `20261111130000_identity_mfa`, so the `migrate` image is
+rebuilt from the same commit and run before the service rolls; readiness answers `503 schema`
+until both MFA tables exist.
+
 `TRUST_PROXY_HOPS=1` makes `request.ip` the address the ALB saw rather than the ALB's own. Without
 it every sign-in counts against one per-IP login limit (10 in 15 minutes), so a handful of attempts
 from anyone returns 429 to everyone. On the operator host, which Cloudflare proxies, the address is
@@ -62,7 +76,9 @@ the Cloudflare edge's; that host is limited to operators, so the coarser count i
 
 The secrets are in the bundle `<env>/identity`, which only the execution role can read:
 `DATABASE_URL`, `IDENTITY_SIGNING_PRIVATE_KEY` (from `pnpm keys:generate`),
-`IDENTITY_SIGNING_SECRET`, `REDIS_URL` and `REDIS_PASSWORD`.
+`IDENTITY_SIGNING_SECRET`, `REDIS_URL` and `REDIS_PASSWORD` (read by the Valkey sidecar; Identity
+itself reads only `REDIS_URL`, which carries the password). Images after `5277d71` also need
+`MFA_ENCRYPTION_KEYS` there, generated where it is stored (`docs/runbooks/mfa.md`).
 
 The two rules in `deploy/RENDER.md` still hold. `PLATFORM_AUTH_ISSUER` in every consumer must
 equal `IDENTITY_BASE_URL`. `IDENTITY_SIGNING_KID` must appear in the consumers' public keys before
@@ -124,7 +140,9 @@ it); the application role cannot create organisations or system roles.
 - **Audience.** `IDENTITY_AUTH_AUDIENCE=munaxa-work,munaxa-control` puts both audiences in every
   token, so a token issued for a Work sign-in is also accepted by Control's audience check. One
   audience per client would be tighter; it is a code change in Identity, left for review.
-- **MFA.** `mfaSatisfied` is always false today, so Control runs with `OPERATOR_REQUIRE_MFA=false`.
+- **MFA.** In release `5277d71` `mfaSatisfied` is always false, so Control runs with
+  `OPERATOR_REQUIRE_MFA=false`. Later images issue `mfa: true` after a TOTP or recovery-code
+  challenge (`docs/runbooks/mfa.md`); whether Control then requires it is Control's setting.
   The operator host sits behind Cloudflare Access with an MFA Require rule (munaxa-platform
   `infra/aws/cloudflare-access.md`), Control verifies the Access token, and
   `OPERATOR_SUBJECT_ALLOWLIST` is mandatory until MFA exists. `operator_cidrs` is empty.
