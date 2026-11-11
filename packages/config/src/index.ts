@@ -11,3 +11,4 @@ export {
   PRODUCTION_EMAIL_TRANSPORTS,
   type IdentityEmailTransport,
 } from './password-recovery.js';
+export { parseMfaKeys, reusesSecret, type MfaKeyEntry, type ParsedMfaKeys } from './mfa-keys.js';

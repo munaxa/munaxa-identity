@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, randomBytes } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
@@ -34,6 +34,8 @@ const production: Record<string, string> = {
   IDENTITY_BASE_URL: 'https://id.example.test',
   CSRF_TRUSTED_ORIGINS: 'https://id.example.test',
   REDIS_URL: 'redis://cache.internal:6379',
+  MFA_ENCRYPTION_KEYS: `mfa-1=${randomBytes(32).toString('base64url')}`,
+  MFA_ENCRYPTION_PRIMARY_KID: 'mfa-1',
 };
 
 const outbox = {

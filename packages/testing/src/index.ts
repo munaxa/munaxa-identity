@@ -128,7 +128,8 @@ export const assertDestroyable = (connectionString: string): void => {
 export const truncateAll = async (owner: pg.PoolClient): Promise<void> => {
   assertDestroyable(OWNER_URL);
   await owner.query(
-    `truncate identity_audit_event, identity_reset_token, identity_role_assignment,
+    `truncate identity_mfa_recovery_code, identity_mfa_enrollment,
+              identity_audit_event, identity_reset_token, identity_role_assignment,
               identity_refresh_token, identity_session, identity_role, identity_account,
               identity_tenant restart identity cascade`,
   );

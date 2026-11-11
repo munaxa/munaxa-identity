@@ -1,6 +1,8 @@
 # ADR-0003 — MFA is deferred, and staging is safe without it
 
-**Status** Accepted · **Date** 2026-09-01
+**Status** Superseded by [ADR-0005](0005-totp-mfa.md) · **Date** 2026-09-01 · **Superseded** 2026-11-11
+
+> Kept unchanged below as the record of why MFA was deferred. ADR-0005 implements it.
 
 ## Context
 

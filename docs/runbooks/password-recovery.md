@@ -9,6 +9,22 @@ port and transports), `apps/api/src/ui/password-recovery.page.ts` (pages),
 `packages/testing/src/password-recovery.integration.test.ts`,
 `packages/config/src/password-recovery.test.ts`.
 
+## Deployment prerequisites (blocking)
+
+- **Production refuses to start unless recovery is disabled.** `IDENTITY_PASSWORD_RESET`
+  defaults to `enabled` and `PRODUCTION_EMAIL_TRANSPORTS` is empty, so with `NODE_ENV=production`
+  (which every AWS task definition sets) Identity exits at startup unless the task definition sets
+  `IDENTITY_PASSWORD_RESET=disabled`. Add that variable before rolling out any image built from
+  this code.
+- **Password reset is unusable in production** until an SES task-role transport is implemented
+  and added to `PRODUCTION_EMAIL_TRANSPORTS` (see "Email delivery on AWS").
+- **Reset links carry the token in the query string.** The request log records only the path,
+  but an ALB, CloudFront or other proxy access log on `/api/auth/password/reset` records the full
+  URL, so those logs contain live bearer credentials for up to the link TTL. Before enabling
+  recovery anywhere: either keep load-balancer and CDN access logging off for this path, or treat
+  those logs as secret (restricted access, short retention). The token leaves the URL after the
+  first request (it moves into a form field), so only the initial `GET` is exposed.
+
 ## The flow
 
 | Route                                        | Does                                                                                                                                                                        | Never                                                                                          |
