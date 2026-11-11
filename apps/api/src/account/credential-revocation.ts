@@ -2,6 +2,7 @@ import type { SessionRevocationReason } from '@munaxa/interfaces';
 import type { SessionId, TenantId, UserId } from '@munaxa/types';
 
 import type { PrismaService, TenantClient } from '../persistence/prisma.service.js';
+import type { RevocationAuditor } from './revocation-audit.js';
 
 /**
  * Ending sessions, and the refresh lineages that would otherwise bring them back.
@@ -23,10 +24,14 @@ import type { PrismaService, TenantClient } from '../persistence/prisma.service.
  * `revoked_at = null`: a revoked row stays revoked whatever else races it.
  *
  * Every write goes through `PrismaService.withTenant`, so it runs under row-level security as the
- * restricted role, and joins an enclosing unit of work for the same tenant when one is open — a
- * password reset can claim its ticket, change the password, bump the token version and call
- * `revokeAllForUser` and have all of it commit or none of it. Nothing here fires work it does not
- * await, for the same reason: inside a unit of work a stray promise would hit a closed transaction.
+ * restricted role. Each method is one transaction of its own: `withTenant` always opens a new
+ * `$transaction`, so a caller cannot today make a revocation commit atomically with its own writes
+ * (a password reset claiming its ticket and changing the password, say). A caller that needs that
+ * must provide a shared unit of work and have these writes join it; until one exists, order the
+ * calls so a crash between them fails safe — bump the token version first, which already refuses
+ * every older token and lineage, then revoke. Nothing here fires work it does not await, so the
+ * methods stay safe to run inside such a unit of work once there is one. Audit records are written
+ * by the callers, after the revocation commits (see `revocation-audit.ts`).
  */
 export interface RevocationOutcome {
   /** Session rows moved from live to revoked by this call. */
@@ -183,21 +188,62 @@ export class AccountLockdown {
       incrementTokenVersion(tenantId: TenantId, userId: UserId): Promise<number>;
     },
     private readonly revocation: CredentialRevocation,
+    private readonly audit: RevocationAuditor = () => Promise.resolve(),
   ) {}
 
-  /** Disable the account and end everything it was signed in with. */
-  public async disable(tenantId: TenantId, userId: UserId): Promise<RevocationOutcome> {
+  /**
+   * Disable the account and end everything it was signed in with.
+   *
+   * `actor` names who decided it — an administrator's account id, or `system:<what>` — and is what
+   * the audit record carries.
+   */
+  public async disable(
+    tenantId: TenantId,
+    userId: UserId,
+    actor: { readonly kind: 'user' | 'system'; readonly id: string } = {
+      kind: 'system',
+      id: 'system:lockdown',
+    },
+  ): Promise<RevocationOutcome> {
     await this.directory.setStatus(tenantId, userId, 'disabled');
     await this.directory.incrementTokenVersion(tenantId, userId);
-    return this.revocation.revokeAllForUser(tenantId, userId, 'account-disabled');
+    const outcome = await this.revocation.revokeAllForUser(tenantId, userId, 'account-disabled');
+    await this.audit({
+      name: 'auth.account.locked',
+      tenantId,
+      actor,
+      subject: userId,
+      payload: { reason: 'account-disabled', ...counts(outcome) },
+    });
+    return outcome;
   }
 
   /**
    * Treat the account as compromised: every credential issued so far is ended, the account stays
    * usable, and the user signs in again with whatever credential they still control.
    */
-  public async suspectedCompromise(tenantId: TenantId, userId: UserId): Promise<RevocationOutcome> {
+  public async suspectedCompromise(
+    tenantId: TenantId,
+    userId: UserId,
+    actor: { readonly kind: 'user' | 'system'; readonly id: string } = {
+      kind: 'system',
+      id: 'system:lockdown',
+    },
+  ): Promise<RevocationOutcome> {
     await this.directory.incrementTokenVersion(tenantId, userId);
-    return this.revocation.revokeAllForUser(tenantId, userId, 'risk-detected');
+    const outcome = await this.revocation.revokeAllForUser(tenantId, userId, 'risk-detected');
+    await this.audit({
+      name: 'session.revoked',
+      tenantId,
+      actor,
+      subject: userId,
+      payload: { reason: 'risk-detected', scope: 'all', ...counts(outcome) },
+    });
+    return outcome;
   }
 }
+
+const counts = (outcome: RevocationOutcome) => ({
+  sessions: outcome.sessions,
+  refreshTokens: outcome.refreshTokens,
+});

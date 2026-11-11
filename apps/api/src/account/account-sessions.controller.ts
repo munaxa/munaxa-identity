@@ -43,7 +43,10 @@ export class AccountSessionsController {
   @HttpCode(200)
   public async revokeOthers(@Req() request: Request, @Res() response: Response): Promise<void> {
     await this.answer(response, async () => {
-      const outcome = await this.sessions.revokeOthers(cookie(request, SESSION_COOKIE));
+      const outcome = await this.sessions.revokeOthers(
+        cookie(request, SESSION_COOKIE),
+        correlation(request),
+      );
       if (!outcome.ok) return unauthenticated(response);
       response.status(200).json({ ok: true, revoked: outcome.revoked });
     });
@@ -56,7 +59,11 @@ export class AccountSessionsController {
     @Res() response: Response,
   ): Promise<void> {
     await this.answer(response, async () => {
-      const outcome = await this.sessions.revoke(cookie(request, SESSION_COOKIE), id);
+      const outcome = await this.sessions.revoke(
+        cookie(request, SESSION_COOKIE),
+        id,
+        correlation(request),
+      );
       if (!outcome.ok) {
         if (outcome.reason === 'unauthenticated') return unauthenticated(response);
         response.status(404).json({ code: 'SESSION_NOT_FOUND' });
@@ -99,3 +106,6 @@ const cookie = (request: Request, name: string): string | undefined => {
   const value = jar?.[name];
   return value === undefined || value.trim() === '' ? undefined : value;
 };
+
+const correlation = (request: Request): string | undefined =>
+  (request as Request & { correlationId?: string }).correlationId;
