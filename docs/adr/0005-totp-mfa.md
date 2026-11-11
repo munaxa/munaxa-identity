@@ -85,7 +85,16 @@ sign in through this flow. A factor the policy requires cannot be removed by its
 require a session created, or reauthenticated through `POST /api/auth/reauthenticate`, within
 `MFA_REAUTH_WINDOW`. Reauthentication needs the password and, when enrolled, a TOTP or recovery
 code; the marker is per session, in Redis, and spent by the change it authorised. Confirming an
-enrollment or removing a factor revokes every other session of the account.
+enrollment or removing a factor revokes every other session of the account; enrolling through the
+enrollment challenge at sign-in revokes every session the account held before the new one exists.
+
+**Attempt limits are reserved, not checked.** Both the per-challenge limit
+(`MFA_CHALLENGE_MAX_ATTEMPTS`) and the per-account limit (`MFA_ACCOUNT_MAX_FAILURES`) are `INCR`ed in
+Redis before the answer is looked at, as Platform's `OtpService` does; only answers within both
+limits reach the factor check, and a correct answer clears the account counter. Checking a counter
+and incrementing it after a wrong answer would let any number of concurrent answers through. A spent
+or locked challenge is refused, not deleted, so a correct answer reserved just before the limit can
+still complete; the record expires with its TTL.
 
 **Password change step-up.** `POST /api/auth/password/change` from an account with an active factor
 also requires that window (`mfa/step-up.ts`), returning 403 `AUTH_REAUTHENTICATION_REQUIRED`

@@ -155,6 +155,41 @@ const sessionsOf = async (userId: UserId) =>
     [userId],
   );
 
+/**
+ * Count how many answers actually reach the factor check on `replicas`. The limits are about this
+ * number, not about what the responses say: a limit that refuses after checking has already lost.
+ */
+const countFactorChecks = (replicas: readonly Replica[]) => {
+  let checks = 0;
+  const restores = replicas.map((r) => {
+    const mfa = r.security.mfa as { verifier: NonNullable<SecurityStack['mfa']>['verifier'] };
+    const original = mfa.verifier;
+    mfa.verifier = (tenantId, userId) => {
+      const service = original(tenantId, userId);
+      return new Proxy(service, {
+        get(target, property, receiver) {
+          const value: unknown = Reflect.get(target, property, receiver);
+          if (typeof value !== 'function') return value;
+          if (property === 'verifyTotpCode' || property === 'verifyRecoveryCode') {
+            return (...args: unknown[]) => {
+              checks += 1;
+              return (value as (...a: unknown[]) => unknown).apply(target, args);
+            };
+          }
+          return (value as (...a: unknown[]) => unknown).bind(target);
+        },
+      });
+    };
+    return () => {
+      mfa.verifier = original;
+    };
+  });
+  return {
+    count: () => checks,
+    restore: () => restores.forEach((restore) => restore()),
+  };
+};
+
 /** A signed-in account with MFA enrolled through the session path. Returns its secret and codes. */
 const enrolled = async (): Promise<{
   id: UserId;
@@ -328,6 +363,48 @@ describe('signing in to an account with MFA', () => {
     expect((await a.flow.verifyChallenge(token, { code: right }, ctx())).ok).toBe(false);
   });
 
+  it('checks at most MFA_CHALLENGE_MAX_ATTEMPTS answers to one challenge, however many arrive at once', async () => {
+    const who = await enrolled();
+    const { token } = challengeOf(await login(a, who.email));
+    const counter = countFactorChecks([a, b]);
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 20 }, (_, i) =>
+          (i % 2 === 0 ? a : b).flow.verifyChallenge(
+            token,
+            { code: String(100000 + i).padStart(6, '0') },
+            ctx(),
+          ),
+        ),
+      );
+      expect(results.every((result) => !result.ok)).toBe(true);
+      expect(counter.count()).toBeLessThanOrEqual(3);
+    } finally {
+      counter.restore();
+    }
+    const right = totpCode(who.secret, (await steadyNow()) + 30_000);
+    expect((await a.flow.verifyChallenge(token, { code: right }, ctx())).ok).toBe(false);
+  });
+
+  it('checks at most MFA_ACCOUNT_MAX_FAILURES answers for the account across concurrent challenges', async () => {
+    const who = await enrolled();
+    const tokens = [];
+    for (let i = 0; i < 4; i++) tokens.push(challengeOf(await login(a, who.email)).token);
+    const counter = countFactorChecks([a, b]);
+    try {
+      await Promise.all(
+        tokens.flatMap((token, t) =>
+          Array.from({ length: 3 }, (_, i) =>
+            ((t + i) % 2 === 0 ? a : b).flow.verifyChallenge(token, { code: '000000' }, ctx()),
+          ),
+        ),
+      );
+      expect(counter.count()).toBeLessThanOrEqual(6);
+    } finally {
+      counter.restore();
+    }
+  });
+
   it('locks second-factor checks for the account across challenges', async () => {
     const who = await enrolled();
     for (let i = 0; i < 3; i++) {
@@ -421,6 +498,37 @@ describe('policy-required enrollment at sign-in', () => {
     expect(challengeOf(await login(a, who.email)).kind).toBe('verify');
   });
 
+  it('ends sessions from before enforcement when the account enrolls at sign-in', async () => {
+    const who = await person({ privileged: true });
+    // Before enforcement: a password-only session.
+    const before = await replica(environmentFor({ MFA_POLICY: 'off' }));
+    try {
+      const old = await login(before, who.email);
+      expect(old.ok).toBe(true);
+    } finally {
+      await before.security.close();
+    }
+    expect((await sessionsOf(who.id)).filter((row) => row.revoked_at === null)).toHaveLength(1);
+
+    const challenge = challengeOf(await login(a, who.email));
+    const found = await a.flow.challenge(challenge.token, 'enroll', ctx());
+    if (!found.ok) throw new Error(found.refusal);
+    const actor = { via: 'challenge' as const, token: challenge.token, record: found.value };
+    const started = await a.flow.startEnrollment(actor, ctx());
+    if (!started.ok) throw new Error(started.refusal);
+    const confirmed = await a.flow.confirmEnrollment(
+      actor,
+      totpCode(started.value.secret, await steadyNow()),
+      ctx(),
+    );
+    if (!confirmed.ok) throw new Error(confirmed.refusal);
+
+    const live = (await sessionsOf(who.id)).filter((row) => row.revoked_at === null);
+    expect(live).toHaveLength(1);
+    expect(live[0]!.id).toBe(confirmed.value.signIn?.claims.sid);
+    expect(live[0]!.mfa_satisfied).toBe(true);
+  });
+
   it('does not let an enrollment challenge replace an existing factor', async () => {
     const who = await person({ privileged: true });
     const { token } = challengeOf(await login(a, who.email));
@@ -488,6 +596,34 @@ describe('sensitive changes require recent reauthentication', () => {
       ok: false,
       refusal: 'reauth-required',
     });
+  });
+
+  it('checks at most MFA_ACCOUNT_MAX_FAILURES factors when reauthentications arrive at once', async () => {
+    const who = await enrolled();
+    const { token } = challengeOf(await login(a, who.email));
+    const signed = await a.flow.verifyChallenge(
+      token,
+      { code: totpCode(who.secret, (await steadyNow()) + 30_000) },
+      ctx(),
+    );
+    if (!signed.ok) throw new Error(signed.refusal);
+    const principal = await principalOf(a, signed.value.access);
+    const counter = countFactorChecks([a, b]);
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 20 }, (_, i) =>
+          (i % 2 === 0 ? a : b).flow.reauthenticate(
+            principal,
+            { password: PASSWORD, code: '000000' },
+            ctx(),
+          ),
+        ),
+      );
+      expect(results.every((result) => !result.ok)).toBe(true);
+      expect(counter.count()).toBeLessThanOrEqual(6);
+    } finally {
+      counter.restore();
+    }
   });
 
   it('requires the second factor, not just the password, to reauthenticate an enrolled account', async () => {

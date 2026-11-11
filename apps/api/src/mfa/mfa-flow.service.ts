@@ -124,8 +124,9 @@ export class MfaFlowService {
       await this.security.mfaChallenges.consume(token);
       return refuse('expired');
     }
+    // Locked: refused, but not deleted. A correct answer reserved before the lock may still be
+    // redeeming this challenge; the lock alone keeps every later attempt out.
     if (await this.security.mfaFailures.locked(record.tenantId, record.userId)) {
-      await this.security.mfaChallenges.consume(token);
       return refuse('locked');
     }
     return ok(record);
@@ -147,11 +148,13 @@ export class MfaFlowService {
     const record = found.value;
     const { tenantId, userId } = record;
 
+    // Reserve the attempt before checking the answer, so concurrent guesses cannot exceed either
+    // limit (`reserve`).
+    const reserved = await this.reserve(tenantId, userId, { token: token as string, record });
+    if (!reserved.ok) return reserved;
     const method = await this.checkFactor(mfa, tenantId, userId, answer);
     if (method === undefined) {
-      const failure = await this.failed(tenantId, userId, context, 'sign-in');
-      const alive = await this.security.mfaChallenges.recordFailure(token as string, record);
-      return refuse(failure === 'locked' || !alive ? 'locked' : 'invalid');
+      return this.failed(tenantId, userId, context, 'sign-in', reserved.value);
     }
 
     // Exactly one redemption across the fleet. A correct answer that loses this race is refused:
@@ -192,7 +195,8 @@ export class MfaFlowService {
     context: RequestContext,
   ): Promise<Outcome<{ readonly expiresInSeconds: number }>> {
     const { tenantId, userId, sessionId } = principal;
-    if (await this.security.mfaFailures.locked(tenantId, userId)) return refuse('locked');
+    const reserved = await this.reserve(tenantId, userId);
+    if (!reserved.ok) return reserved;
 
     const account = await this.security.directory.findById(tenantId, userId);
     // The same cost whether or not the account has a password, as at sign-in.
@@ -210,8 +214,7 @@ export class MfaFlowService {
     }
 
     if (!passwordOk || !factorOk) {
-      const failure = await this.failed(tenantId, userId, context, 'reauthentication');
-      return refuse(failure === 'locked' ? 'locked' : 'invalid');
+      return this.failed(tenantId, userId, context, 'reauthentication', reserved.value);
     }
     await this.security.mfaFailures.clear(tenantId, userId);
     await this.security.reauthentication.record(tenantId, sessionId);
@@ -270,10 +273,15 @@ export class MfaFlowService {
     if (actor.via === 'session' && !(await this.recentlyReauthenticated(actor.principal))) {
       return refuse('reauth-required');
     }
-    if (await this.security.mfaFailures.locked(tenantId, userId)) return refuse('locked');
-
     const replacing = await mfa.verifier(tenantId, userId).isEnrolled(tenantId, userId);
     if (actor.via === 'challenge' && replacing) return refuse('already-enrolled');
+
+    const reserved = await this.reserve(
+      tenantId,
+      userId,
+      actor.via === 'challenge' ? { token: actor.token, record: actor.record } : undefined,
+    );
+    if (!reserved.ok) return reserved;
 
     let recoveryCodes: readonly string[];
     try {
@@ -282,12 +290,7 @@ export class MfaFlowService {
         .confirmTotpEnrollment(tenantId, userId, normaliseTotp(code));
     } catch (error) {
       if (isPlatformError(error) && error.code === 'AUTH_MFA_INVALID') {
-        const failure = await this.failed(tenantId, userId, context, 'enrollment');
-        const alive =
-          actor.via === 'challenge'
-            ? await this.security.mfaChallenges.recordFailure(actor.token, actor.record)
-            : true;
-        return refuse(failure === 'locked' || !alive ? 'locked' : 'invalid');
+        return this.failed(tenantId, userId, context, 'enrollment', reserved.value);
       }
       throw error;
     }
@@ -313,6 +316,11 @@ export class MfaFlowService {
       await this.security.reauthentication.clear(tenantId, actor.principal.sessionId);
       return ok({ recoveryCodes });
     }
+
+    // Enrollment during sign-in. Any session the account already holds was established without a
+    // second factor (`mfaSatisfied: false`, typically from before enforcement was turned on); it
+    // ends now, before the new session exists, so only the session that proved both factors lives.
+    await this.security.revocation.revokeAllForUser(tenantId, userId, 'mfa-changed');
 
     // Enrollment during sign-in: the challenge is spent and the sign-in completes now, with both
     // factors proven. If another request already spent it, the factor stands but no session is
@@ -436,15 +444,42 @@ export class MfaFlowService {
     return undefined;
   }
 
-  private async failed(
+  /**
+   * Reserve one second-factor check, for the account and (when there is one) the challenge, before
+   * the answer is looked at. Both counters are `INCR`ed first, so N concurrent answers are N
+   * increments and only those within the limits are ever checked; the rest are refused unchecked.
+   * A correct answer clears the account counter; a wrong one leaves its reservation as the failure.
+   */
+  private async reserve(
+    tenantId: TenantId,
+    userId: UserId,
+    challenge?: { readonly token: string; readonly record: ChallengeRecord },
+  ): Promise<Outcome<{ readonly last: boolean }>> {
+    const account = await this.security.mfaFailures.reserve(tenantId, userId);
+    if (account === undefined) return refuse('locked');
+    if (challenge === undefined) return ok({ last: account.last });
+    const attempt = await this.security.mfaChallenges.reserveAttempt(
+      challenge.token,
+      challenge.record,
+    );
+    if (attempt === undefined) return refuse('locked');
+    return ok({ last: account.last || attempt.last });
+  }
+
+  /**
+   * A wrong answer on a reserved attempt: audit it, and say `locked` if that was the last one. The
+   * challenge is not deleted here: a concurrent correct answer may still be redeeming it, and the
+   * next reservation past the limit deletes it anyway.
+   */
+  private async failed<T>(
     tenantId: TenantId,
     userId: UserId,
     context: RequestContext,
     stage: 'sign-in' | 'enrollment' | 'reauthentication',
-  ): Promise<'counted' | 'locked'> {
-    const failures = await this.security.mfaFailures.fail(tenantId, userId);
+    reserved: { readonly last: boolean },
+  ): Promise<Outcome<T>> {
     await this.audit(tenantId, userId, context, 'auth.mfa.failed', 'failure', { stage });
-    return failures >= this.environment.MFA_ACCOUNT_MAX_FAILURES ? 'locked' : 'counted';
+    return refuse(reserved.last ? 'locked' : 'invalid');
   }
 
   /** A chained audit record. Never a code, a secret or a token; reported, never fatal. */

@@ -50,7 +50,19 @@ Configuration: `MFA_POLICY` (`off`/`privileged`/`all`), `MFA_PRIVILEGED_ROLES`, 
 1. Deploy with the key ring and `MFA_POLICY=off`; let privileged people enrol from their sessions.
 2. Set `MFA_POLICY=privileged` and `MFA_PRIVILEGED_ROLES` (for example `control-operator-admin`).
    Anyone in those roles without a factor is now admitted only to enrollment at their next sign-in.
-3. Revoke the existing sessions of those accounts so nobody keeps a pre-enforcement session.
+3. Deal with the sessions those accounts already hold. They were created before enforcement, so
+   they carry `mfa_satisfied = false` and `amr = ["password"]`, and they stay valid until they are
+   revoked or reach `SESSION_IDLE_TIMEOUT` / `SESSION_ABSOLUTE_TIMEOUT`:
+   - **Enrolling at sign-in ends them.** Confirming an enrollment through the enrollment challenge
+     revokes every session the account held (reason `mfa-changed`) before the new, MFA-satisfied
+     session is created. Enrolling from a session revokes every other session the same way.
+   - **An account that does not sign in again** keeps its pre-enforcement sessions until they
+     expire. To end them immediately, the person signs out other sessions
+     (`POST /api/auth/sessions/revoke-others`), or an operator revokes them. A reviewed
+     operator command for that is part of the production hardening work; until it exists, do not
+     treat enforcement as complete for an account until its pre-enforcement sessions have expired.
+   - Downstream services that need assurance should require the `mfa: true` claim rather than
+     assume that enforcement covers every live session.
 
 ## The key ring
 

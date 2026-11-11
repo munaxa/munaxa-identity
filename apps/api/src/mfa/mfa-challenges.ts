@@ -24,7 +24,8 @@ import { cacheKey, type TenantId, type UserId } from '@munaxa/types';
  * - **Bound.** It records the tenant, the account, the account's token version at the time and a
  *   digest of the user agent; completion re-checks all of them, so a challenge copied to another
  *   browser, or outlived by a password change, is refused.
- * - **Bounded.** A TTL, and an attempt counter (`INCR`) that destroys the challenge at its limit.
+ * - **Bounded.** A TTL, and an attempt counter reserved with `INCR` before each answer is checked,
+ *   so concurrent answers cannot exceed the limit; at it, the challenge is dead.
  */
 export type ChallengeKind = 'verify' | 'enroll';
 
@@ -114,21 +115,29 @@ export class MfaChallenges {
   }
 
   /**
-   * Count one wrong answer. Returns false once the limit is reached, and the challenge is then
-   * destroyed: the holder must prove the password again to get another.
+   * Reserve one attempt **before** the answer is checked.
+   *
+   * `INCR` first, then verify: Redis serialises the increments, so however many answers arrive at
+   * once, across however many replicas, at most `maxAttempts` of them are ever checked against the
+   * factor. Checking a counter and incrementing it after a wrong answer would let every concurrent
+   * request through the check. Returns the attempt number, or `undefined` once the budget is spent,
+   * in which case the challenge is dead and the answer must not be checked at all.
    */
-  public async recordFailure(token: string, record: ChallengeRecord): Promise<boolean> {
-    const attempts = await this.cache.increment(this.#attemptsKey(token), 1, {
+  public async reserveAttempt(
+    token: string,
+    record: ChallengeRecord,
+  ): Promise<{ readonly attempt: number; readonly last: boolean } | undefined> {
+    const attempt = await this.cache.increment(this.#attemptsKey(token), 1, {
       ttl: Math.max(1, record.expiresAt - this.#now()),
     });
-    if (attempts >= this.options.maxAttempts) {
-      await this.cache.delete(this.#key(token));
-      return false;
-    }
-    return true;
+    // Over the limit: refused, unchecked. The challenge record is left for its TTL rather than
+    // deleted, because an attempt reserved within the limit may be a correct answer still being
+    // redeemed; `exhausted` and every later reservation already treat a spent budget as dead.
+    if (attempt > this.options.maxAttempts) return undefined;
+    return { attempt, last: attempt >= this.options.maxAttempts };
   }
 
-  /** Whether the attempt budget is already spent (checked before verifying a code). */
+  /** Whether the attempt budget is already spent (a fast refusal before any other work). */
   public async exhausted(token: string): Promise<boolean> {
     const attempts = (await this.cache.get<number>(this.#attemptsKey(token))) ?? 0;
     return attempts >= this.options.maxAttempts;
@@ -136,9 +145,9 @@ export class MfaChallenges {
 
   /** Spend the challenge. Exactly one caller across the fleet gets `true`. */
   public async consume(token: string): Promise<boolean> {
-    const won = await this.cache.delete(this.#key(token));
-    await this.cache.delete(this.#attemptsKey(token));
-    return won;
+    // The attempt counter is left to its TTL: deleting it would hand requests already past `peek`
+    // a fresh budget.
+    return this.cache.delete(this.#key(token));
   }
 
   #key(token: string): string {
@@ -167,8 +176,20 @@ export class MfaFailureCounter {
     return ((await this.cache.get<number>(this.#key(tenantId, userId))) ?? 0) >= this.max;
   }
 
-  public async fail(tenantId: TenantId, userId: UserId): Promise<number> {
-    return this.cache.increment(this.#key(tenantId, userId), 1, { ttl: this.windowMs });
+  /**
+   * Reserve one second-factor check for the account **before** it runs (`INCR` first, as for a
+   * challenge). `undefined` means the account is locked and the answer must not be checked. A
+   * correct answer clears the counter; a wrong one leaves its reservation counted as the failure.
+   */
+  public async reserve(
+    tenantId: TenantId,
+    userId: UserId,
+  ): Promise<{ readonly count: number; readonly last: boolean } | undefined> {
+    const count = await this.cache.increment(this.#key(tenantId, userId), 1, {
+      ttl: this.windowMs,
+    });
+    if (count > this.max) return undefined;
+    return { count, last: count >= this.max };
   }
 
   public async clear(tenantId: TenantId, userId: UserId): Promise<void> {
