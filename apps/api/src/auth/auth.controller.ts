@@ -280,9 +280,18 @@ const knownError = (
  * Only a path within the shared public origin is honoured. An absolute URL, or anything beginning
  * `//`, would make the sign-in page an open redirect — a phishing landing spot on a URL that
  * genuinely starts with our own domain, reached through the one page users are trained to trust.
+ *
+ * A backslash anywhere is refused too. Browsers (WHATWG URL parsing) treat `\` as `/` in an http(s)
+ * URL, so `/\evil.example` is the scheme-relative `//evil.example` in disguise, and Express sends
+ * it in `Location` unencoded. Control characters are refused because browsers strip tab and newline
+ * before parsing, which turns `/<TAB>/evil.example` into `//evil.example` the same way.
  */
 export const safeReturnTo = (requested: string | undefined): string =>
-  requested !== undefined && requested.startsWith('/') && !requested.startsWith('//')
+  requested !== undefined &&
+  requested.startsWith('/') &&
+  !requested.startsWith('//') &&
+  !requested.includes('\\') &&
+  !/[\u0000-\u001f\u007f]/.test(requested)
     ? requested
     : '/';
 
