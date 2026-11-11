@@ -152,7 +152,7 @@ jobs:
       # source alone: a schema declaring `IDENTITY_SIGNING_SECRET` is the opposite of a leak.
       - name: No secret values in environment or deployment files
         run: |
-          if git grep -nE '^[[:space:]]*-?[[:space:]]*(IDENTITY_SIGNING_SECRET|IDENTITY_SIGNING_PRIVATE_KEY|WORK_PII_MATCH_SECRET|WORK_DATABASE_URL|PLATFORM_PACKAGES_TOKEN)[[:space:]]*[:=][[:space:]]*[^[:space:]$#]' \
+          if git grep -nE '^[[:space:]]*-?[[:space:]]*(IDENTITY_SIGNING_SECRET|IDENTITY_SIGNING_PRIVATE_KEY|MFA_ENCRYPTION_KEYS|WORK_PII_MATCH_SECRET|WORK_DATABASE_URL|PLATFORM_PACKAGES_TOKEN)[[:space:]]*[:=][[:space:]]*[^[:space:]$#]' \
                -- '.env*' 'deploy/*'; then
             echo "A secret has a value in an environment or deployment file. Placeholders only." >&2
             exit 1
