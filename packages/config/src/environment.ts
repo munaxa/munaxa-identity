@@ -163,6 +163,16 @@ export const IDENTITY_SCHEMA = extendConfig(
      * an account is still found only inside it.
      */
     IDENTITY_DEFAULT_ORGANISATION: string({ default: '' }),
+
+    /**
+     * What a person's session list shows about where each session came from.
+     *
+     * `prefix` (the default) shows the network — `203.0.113.0/24`, or the /48 of an IPv6
+     * address — which is enough to recognise "that was me, at home" and is not the full address.
+     * `hidden` shows nothing, for a deployment whose privacy policy does not permit even that.
+     * The full address is never returned under either setting.
+     */
+    IDENTITY_SESSION_LIST_IP: oneOf(['hidden', 'prefix'] as const, { default: 'prefix' }),
   },
   {
     refine: (resolved) => {

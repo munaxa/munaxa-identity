@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { loadEnvironment, type IdentityEnvironment } from '@identity/config';
 
+import { AccountSessionsController } from './account/account-sessions.controller.js';
+import { AccountSessionsService } from './account/account-sessions.service.js';
 import { AuthController } from './auth/auth.controller.js';
 import { AuthService } from './auth/auth.service.js';
 import { HealthController } from './health/health.controller.js';
@@ -24,10 +26,11 @@ import { ENVIRONMENT, LOGGER, SECURITY_STACK } from './tokens.js';
  * two of them to disagree about which store they are talking to.
  */
 @Module({
-  controllers: [AuthController, HealthController],
+  controllers: [AuthController, AccountSessionsController, HealthController],
   providers: [
     PrismaService,
     AuthService,
+    AccountSessionsService,
     EdgeMiddleware,
     RequestLogMiddleware,
     { provide: ENVIRONMENT, useFactory: (): IdentityEnvironment => loadEnvironment() },

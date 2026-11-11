@@ -101,11 +101,26 @@ export class PrismaSessionStore implements SessionStorePort {
     return rows.map(recordOf);
   }
 
+  /**
+   * A whole-record write that can never un-revoke.
+   *
+   * `SessionManager.touch` is validate-then-write: it reads the row, slides the idle window and
+   * writes the whole record back. If a revocation commits between that read and that write, a
+   * plain update writes `revoked_at = null` with the stale copy and the session is alive again —
+   * the user pressed "sign out this device", got a success, and the device is still signed in.
+   * Refresh does exactly this on every rotation, so the race is the ordinary case for a session in
+   * active use, not an exotic one.
+   *
+   * So a record without `revokedAt` only updates a row that is still unrevoked, and a record with
+   * one writes the revocation but never moves an existing one. Revocation is one-way in the
+   * database, whatever order the writes arrive in.
+   */
   public async update(session: SessionRecord): Promise<void> {
+    const { revokedAt, revocationReason, ...live } = rowOf(session);
     await this.prisma.withTenant(session.tenantId, (tx) =>
       tx.identitySession.updateMany({
-        where: { tenantId: session.tenantId, id: session.id },
-        data: rowOf(session),
+        where: { tenantId: session.tenantId, id: session.id, revokedAt: null },
+        data: revokedAt === null ? live : { ...live, revokedAt, revocationReason },
       }),
     );
   }

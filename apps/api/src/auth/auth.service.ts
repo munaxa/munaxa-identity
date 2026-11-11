@@ -7,6 +7,7 @@ import type { IdentityEnvironment } from '@identity/config';
 import { ENVIRONMENT, SECURITY_STACK } from '../tokens.js';
 import { PrismaService } from '../persistence/prisma.service.js';
 import type { SecurityStack } from '../platform/security.js';
+import { resolvePrincipal, verifiedClaimsIgnoringExpiry } from './principal.js';
 
 /**
  * The authentication flow, end to end.
@@ -192,30 +193,58 @@ export class AuthService {
     const { record } = rotation.issued;
     const sessionId = record.sessionId;
 
-    // The session, the account status and the token version are all re-checked. A refresh is the
-    // one moment a revoked session or a disabled account can be caught before the access token's
-    // lifetime runs out, and skipping it would waste the only chance.
-    if (sessionId !== undefined) {
-      const validation = await this.security.sessions.validate(tenantId, sessionId, {
-        tokenVersion: record.tokenVersion,
-      });
-      if (!validation.valid) {
-        await this.security.refreshTokens.revokeFamily(
-          tenantId,
-          record.familyId,
-          validation.reason,
-        );
-        return { ok: false, failure: { kind: 'invalid-credentials' } };
-      }
-      await this.security.sessions.touch(tenantId, sessionId, {
-        ...(request.ipAddress === undefined ? {} : { ipAddress: request.ipAddress }),
-        ...(request.userAgent === undefined ? {} : { userAgent: request.userAgent }),
-      });
+    // Identity binds every lineage to a session at sign-in. One without a session is a lineage no
+    // user can see in their session list or sign out, so it is refused rather than honoured.
+    if (sessionId === undefined) {
+      await this.security.refreshTokens.revokeFamily(tenantId, record.familyId, 'admin-revoked');
+      return { ok: false, failure: { kind: 'invalid-credentials' } };
     }
 
+    // The account first, because its *current* token version is what everything else is held to.
+    // A reset, a disablement or an MFA removal bumps it; a lineage minted before the bump is dead,
+    // and so is the session it belonged to. Comparing the refresh record with the session — both
+    // copied from the account at sign-in — would compare two copies of the old value and pass.
     const account = await this.security.directory.findById(tenantId, record.userId);
-    if (account === undefined || account.status !== 'active') {
-      await this.security.refreshTokens.revokeFamily(tenantId, record.familyId, 'account-disabled');
+    if (
+      account === undefined ||
+      account.status !== 'active' ||
+      account.tokenVersion !== record.tokenVersion
+    ) {
+      const reason =
+        account !== undefined && account.status === 'active'
+          ? 'password-changed'
+          : 'account-disabled';
+      await this.security.revocation.revokeSession(tenantId, record.userId, sessionId, reason);
+      await this.security.refreshTokens.revokeFamily(tenantId, record.familyId, reason);
+      return { ok: false, failure: { kind: 'invalid-credentials' } };
+    }
+
+    // The session is re-checked on every rotation. A refresh is the one moment a revoked session
+    // can be caught before the access token's lifetime runs out, and rotation must never be a way
+    // to bring a revoked session back: the new token in this lineage dies here on its first use.
+    const validation = await this.security.sessions.validate(tenantId, sessionId, {
+      tokenVersion: account.tokenVersion,
+    });
+    if (!validation.valid || validation.session.userId !== record.userId) {
+      await this.security.refreshTokens.revokeFamily(
+        tenantId,
+        record.familyId,
+        validation.valid ? 'token-reuse' : validation.reason,
+      );
+      return { ok: false, failure: { kind: 'invalid-credentials' } };
+    }
+
+    // `touch` re-reads the row, and the store writes only an unrevoked one, so a revocation that
+    // committed after the check above is caught here as well and is a refusal too. What remains is
+    // the gap between touch's own read and the mint below: a revocation landing inside it lets one
+    // access token out, which every Identity route then refuses (`resolvePrincipal` validates the
+    // session) and which no refresh can extend, because this lineage's next rotation fails above.
+    const touched = await this.security.sessions.touch(tenantId, sessionId, {
+      ...(request.ipAddress === undefined ? {} : { ipAddress: request.ipAddress }),
+      ...(request.userAgent === undefined ? {} : { userAgent: request.userAgent }),
+    });
+    if (touched === undefined) {
+      await this.security.refreshTokens.revokeFamily(tenantId, record.familyId, 'logout');
       return { ok: false, failure: { kind: 'invalid-credentials' } };
     }
 
@@ -228,21 +257,21 @@ export class AuthService {
     );
   }
 
-  /** Ends the session and its refresh lineage. Never fails because a token has expired. */
+  /**
+   * Ends the session and its refresh lineage. Never fails because a token has expired, and never
+   * fails at all from the caller's point of view: signing out twice, or signing out with no
+   * session, is the same success.
+   *
+   * The access token must be one Identity signed — its expiry is the only check relaxed (see
+   * `verifiedClaimsIgnoringExpiry`). This used to read the token with `decodeUnsafe`, which meant a
+   * forged token naming somebody else's `sid` signed that person out. Now nothing happens on the
+   * strength of a token Identity did not issue.
+   */
   public async logout(input: {
     readonly refreshToken?: string | undefined;
     readonly accessToken?: string | undefined;
   }): Promise<void> {
-    const claims =
-      input.accessToken === undefined
-        ? undefined
-        : this.security.tokens.decodeUnsafe(input.accessToken);
-
-    // `decodeUnsafe` is used, and the name is honest about what it is: the token may be expired,
-    // forged or truncated. Nothing is *granted* on the strength of it — the worst a forged token
-    // achieves here is revoking a session the forger already named, which they could do by signing
-    // out normally. Requiring a valid token instead would mean logout stops working exactly when a
-    // user most wants it to.
+    const claims = verifiedClaimsIgnoringExpiry(this.security, input.accessToken);
     const tenantId = claims?.tid;
 
     if (tenantId !== undefined && input.refreshToken !== undefined) {
@@ -251,8 +280,9 @@ export class AuthService {
         .catch(() => false);
     }
     if (tenantId !== undefined && claims?.sid !== undefined) {
-      await this.security.sessions
-        .revoke(tenantId, claims.sid as SessionId, 'logout')
+      // The session row and every refresh token bound to it, in one transaction.
+      await this.security.revocation
+        .revokeSession(tenantId, claims.sub as UserId, claims.sid as SessionId, 'logout')
         .catch(() => false);
     }
   }
@@ -264,15 +294,12 @@ export class AuthService {
     | { readonly signedIn: false }
     | { readonly signedIn: true; readonly subject: string; readonly expiresAt: number }
   > {
-    if (accessToken === undefined) return { signedIn: false };
     try {
-      const claims = this.security.tokens.verifyAccessToken(accessToken);
-      const validation =
-        claims.sid === undefined
-          ? undefined
-          : await this.security.sessions.validate(claims.tid, claims.sid as SessionId);
-
-      if (validation !== undefined && !validation.valid) return { signedIn: false };
+      // The same gate every authenticated route uses: a revoked session, a disabled account or a
+      // token minted before a version bump all read as signed out here too.
+      const resolved = await resolvePrincipal(this.security, accessToken);
+      if (!resolved.ok) return { signedIn: false };
+      const { claims } = resolved.principal;
       return { signedIn: true, subject: claims.sub, expiresAt: claims.exp * 1_000 };
     } catch {
       return { signedIn: false };
