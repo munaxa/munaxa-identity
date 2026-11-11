@@ -17,17 +17,20 @@ import {
  * Run as a one-off task of the Identity service definition, with its configuration and its
  * secrets, never with values typed on a command line (`docs/runbooks/mfa.md`). Commands:
  *
- *   mfa-reset                    remove a lost factor, end every session      --account --reference
- *   account-disable              disable an account, end every session        --account --reference
+ *   mfa-reset                    remove a lost factor, end every session      --account-id --reference
+ *   account-disable              disable an account, end every session        --account-id --reference
  *   sessions-revoke-unsatisfied  end pre-enforcement sessions of covered accounts       --reference
- *   mfa-reencrypt                re-seal TOTP secrets under the primary MFA key
+ *   mfa-reencrypt                re-seal TOTP secrets under the primary MFA key          --reference
+ *
+ * `--account-id` is preferred to `--account`: an identifier is an email address, and a task
+ * override is recorded in CloudTrail.
  *
  * Without `--apply`, each reports what it would do and changes nothing.
  */
 
 const USAGE =
   'usage: operator-cli <mfa-reset|account-disable|sessions-revoke-unsatisfied|mfa-reencrypt> ' +
-  '--organisation <key> [--account <identifier>] [--reference <ticket>] [--apply]';
+  '--organisation <key> [--account-id <id> | --account <identifier>] [--reference <ticket>] [--apply]';
 
 export const parseArguments = (
   argv: readonly string[],
@@ -59,6 +62,7 @@ export const runCommand = async (deps: OperatorDeps, argv: readonly string[]): P
       await mfaReset(deps, {
         organisation: options.organisation,
         account: options.account,
+        accountId: options['account-id'],
         reference: options.reference,
         apply,
       });
@@ -67,6 +71,7 @@ export const runCommand = async (deps: OperatorDeps, argv: readonly string[]): P
       await accountDisable(deps, {
         organisation: options.organisation,
         account: options.account,
+        accountId: options['account-id'],
         reference: options.reference,
         apply,
       });
@@ -79,7 +84,11 @@ export const runCommand = async (deps: OperatorDeps, argv: readonly string[]): P
       });
       return;
     case 'mfa-reencrypt':
-      await mfaReencrypt(deps, { organisation: options.organisation, apply });
+      await mfaReencrypt(deps, {
+        organisation: options.organisation,
+        reference: options.reference,
+        apply,
+      });
       return;
     default:
       throw new OperatorError(USAGE);

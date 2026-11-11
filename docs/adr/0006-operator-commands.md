@@ -29,16 +29,23 @@ service, as `identity_app` under row-level security.
 - **No secrets in arguments.** The commands take no secret, password, code or connection string;
   they read the service's mounted secrets like the service does. Output names accounts by id, never
   by identifier.
-- **Authorisation is the platform's.** Who may run a one-off task of the Identity service is
-  decided by the deployment's access control (on AWS, who may call `ecs:RunTask` with that task
-  definition), and each procedure adds human controls (out-of-band identity verification and a
-  second operator for `mfa-reset`, `docs/runbooks/mfa.md`).
+- **Authorisation is the platform's.** Who may run these commands is decided by the deployment's
+  access control, and each procedure adds human controls (out-of-band identity verification and a
+  second operator for `mfa-reset`, `docs/runbooks/mfa.md`). On AWS the equivalent power is held by
+  any principal with any one of: `ecs:RunTask` on the Identity task definition; `ecs:ExecuteCommand` into a running Identity task;
+  `ecs:RegisterTaskDefinition` or `ecs:UpdateService` together with `iam:PassRole` on the Identity
+  task or execution role; and read access to the secrets the task mounts (with them and network
+  reach to the database, anyone can act as the service without these commands at all). The commands add no power that set does not
+  already have; they make its exercise auditable.
+- **Account ids in task overrides.** A task override is recorded in CloudTrail, so commands take
+  `--account-id` (preferred) as well as `--account <identifier>`; an identifier is an email
+  address and is personal data wherever it is logged.
 
 ## Consequences
 
 - No new network surface. The commands cannot be reached from the internet.
 - Every operator action is in the same audit chain as the user actions it affects.
-- The deployment must restrict who can run one-off Identity tasks; that permission now carries the
+- The deployment must restrict every permission in the set above, not only `ecs:RunTask`; each now carries the
   power to remove a factor or disable an account. It is listed in the production readiness
   checklist.
 - When an administration API exists, it should call the same functions, and these commands remain

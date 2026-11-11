@@ -113,7 +113,8 @@ Zero-downtime and two-phase, because every envelope and every recovery-code hash
    working under the old one.
 2. **Re-encrypt.** For every organisation, with the new configuration:
    `operator-cli mfa-reencrypt --organisation <key>` (dry run: how many secrets are not under the
-   primary), then the same with `--apply`. Each secret is decrypted with its own AAD and re-sealed under the primary; a row replaced
+   primary), then the same with `--reference <change id> --apply`, which writes
+   `crypto.key.rotated` with the counts. Each secret is decrypted with its own AAD and re-sealed under the primary; a row replaced
    concurrently is skipped, not overwritten. A row that fails to authenticate is counted, left
    alone and never printed — investigate it as possible tampering.
 3. **Recovery codes.** Hashes cannot be re-keyed without the code. `mfa-reencrypt` also
@@ -136,16 +137,19 @@ configuration, its mounted secrets and its `identity_app` connection, under the 
 security and audit chain as the service. Never pass a secret, a password or a database URL on the
 command line or as a task override: overrides are recorded in plain text.
 
-| Command                       | Changes                                                                                 | Needs                                        |
-| ----------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `mfa-reset`                   | Removes a factor and its recovery codes; bumps the token version; revokes every session | `--organisation`, `--account`, `--reference` |
-| `account-disable`             | Disables the account; bumps the token version; revokes every session                    | `--organisation`, `--account`, `--reference` |
-| `sessions-revoke-unsatisfied` | Revokes pre-enforcement (`mfa_satisfied = false`) sessions of covered accounts          | `--organisation`, `--reference`              |
-| `mfa-reencrypt`               | Re-seals TOTP secrets under the primary key                                             | `--organisation`                             |
+| Command                       | Changes                                                                                 | Needs                                           |
+| ----------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `mfa-reset`                   | Removes a factor and its recovery codes; bumps the token version; revokes every session | `--organisation`, `--account-id`, `--reference` |
+| `account-disable`             | Disables the account; bumps the token version; revokes every session                    | `--organisation`, `--account-id`, `--reference` |
+| `sessions-revoke-unsatisfied` | Revokes pre-enforcement (`mfa_satisfied = false`) sessions of covered accounts          | `--organisation`, `--reference`                 |
+| `mfa-reencrypt`               | Re-seals TOTP secrets under the primary key; audits `crypto.key.rotated`                | `--organisation`, `--reference`                 |
 
 Every command is a dry run without `--apply`. `--reference` is a ticket or incident id (letters,
 digits, `. _ : -`; never a name or an email) and is carried into the audit record as the actor,
-`operator:<reference>`. Output names accounts by id only.
+`operator:<reference>`. Output names accounts by id only. Prefer `--account-id` to
+`--account <identifier>`: the arguments of a one-off task are recorded in CloudTrail, and an
+identifier is an email address. Look the id up from the ticket's account record, not by pasting
+the identifier into the task.
 
 ## Lost device (operator recovery)
 
@@ -161,15 +165,16 @@ because after a reset the account belongs to whoever holds the password.
 3. **A second operator approves** the ticket before anything runs. The person who verified is not
    the person who runs the command.
 4. **Dry run**, check that the account id is the one in the ticket:
-   `operator-cli mfa-reset --organisation <key> --account <identifier>`.
+   `operator-cli mfa-reset --organisation <key> --account-id <id>`.
 5. **Apply**: the same with `--reference <ticket> --apply`. This removes the TOTP factor (active
    and pending) and every recovery code, bumps the token version (every access token stops
-   verifying at the next check) and revokes every session and refresh lineage, then writes
-   `auth.mfa.removed` with `operator:<ticket>`.
+   verifying at the next check) and revokes every session and refresh lineage first, then removes
+   the factor, then writes `auth.mfa.removed` with `operator:<ticket>`. If it fails part-way the
+   account is left signed out everywhere with its factor intact; run the same command again.
 6. **If the password may also be known to someone else**, do not hand the account back on it.
    Where password reset is enabled, the person resets it (`/api/auth/password/forgot`) before
    signing in. Where it is disabled (production, until email delivery exists), run
-   `operator-cli account-disable --organisation <key> --account <identifier> --reference <ticket>
+   `operator-cli account-disable --organisation <key> --account-id <id> --reference <ticket>
 --apply` instead and re-establish the account through provisioning. Otherwise the person signs in
    with the password and, if policy covers them, is admitted only to enrollment and enrolls a new
    device straight away.

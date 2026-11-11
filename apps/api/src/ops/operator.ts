@@ -56,6 +56,28 @@ const tenantOf = async (
   return tenantId;
 };
 
+/**
+ * The account, by `--account-id` (preferred: an id is not personal data, so it is safe in a task
+ * override that CloudTrail records) or by `--account` (the sign-in identifier, an email address).
+ * Exactly one of the two.
+ */
+const accountOf = async (
+  deps: OperatorDeps,
+  tenantId: TenantId,
+  input: { readonly account?: string | undefined; readonly accountId?: string | undefined },
+) => {
+  const byIdentifier = input.account !== undefined && input.account.trim() !== '';
+  const byId = input.accountId !== undefined && input.accountId.trim() !== '';
+  if (byIdentifier === byId) {
+    throw new OperatorError('Give exactly one of --account-id (preferred) or --account');
+  }
+  const account = byId
+    ? await deps.security.directory.findById(tenantId, input.accountId!.trim() as UserId)
+    : await deps.security.directory.findByIdentifier(tenantId, input.account!);
+  if (account === undefined) throw new OperatorError('No such account in that organisation');
+  return account;
+};
+
 const operatorActor = (reference: string) => ({
   kind: 'system' as const,
   id: `operator:${reference}`,
@@ -76,9 +98,9 @@ export interface MfaResetResult {
  * Remove an account's second factor after its owner has lost it, and end everything the account
  * was signed in with.
  *
- * What it does, in order: deletes the active and any pending TOTP enrollment and every recovery
- * code (the store keeps `mfa_enrolled` in step), bumps the token version and revokes every session
- * and refresh lineage (`AccountLockdown.suspectedCompromise`), then writes `auth.mfa.removed` with
+ * What it does, in order: bumps the token version and revokes every session and refresh lineage
+ * (`AccountLockdown.suspectedCompromise`), deletes the active and any pending TOTP enrollment and
+ * every recovery code (the store keeps `mfa_enrolled` in step), then writes `auth.mfa.removed` with
  * the operator reference. The password is not touched.
  *
  * What it does not do is establish who is asking. That is the procedure in `docs/runbooks/mfa.md`
@@ -91,16 +113,13 @@ export const mfaReset = async (
   input: {
     readonly organisation?: string | undefined;
     readonly account?: string | undefined;
+    readonly accountId?: string | undefined;
     readonly reference?: string | undefined;
     readonly apply: boolean;
   },
 ): Promise<MfaResetResult> => {
   const tenantId = await tenantOf(deps, input.organisation);
-  if (input.account === undefined || input.account.trim() === '') {
-    throw new OperatorError('--account is required (the sign-in identifier)');
-  }
-  const account = await deps.security.directory.findByIdentifier(tenantId, input.account);
-  if (account === undefined) throw new OperatorError('No such account in that organisation');
+  const account = await accountOf(deps, tenantId, input);
   const userId = account.userId;
   const mfa = deps.security.mfa;
   const enrolled =
@@ -117,13 +136,17 @@ export const mfaReset = async (
     throw new OperatorError('MFA is not configured in this environment (no MFA_ENCRYPTION_KEYS)');
   }
 
-  await mfa.enroller(tenantId, userId).remove(tenantId, userId, 'totp');
-  await mfa.verifier(tenantId, userId).remove(tenantId, userId, 'totp');
+  // Sessions first, factor second. Each step is its own transaction, so the order decides what a
+  // failure between them leaves behind: this way an account with no live session and its factor
+  // still in place (safe; re-run the command), never an account with no factor and its sessions
+  // still live. Both steps are idempotent, so a re-run completes the reset.
   const outcome = await deps.security.lockdown.suspectedCompromise(
     tenantId,
     userId,
     operatorActor(reference),
   );
+  await mfa.enroller(tenantId, userId).remove(tenantId, userId, 'totp');
+  await mfa.verifier(tenantId, userId).remove(tenantId, userId, 'totp');
   await deps.security.audit
     .write(
       anonymousAuditEvent(tenantId, toCorrelationId(randomUUID()), {
@@ -160,6 +183,7 @@ export const accountDisable = async (
   input: {
     readonly organisation?: string | undefined;
     readonly account?: string | undefined;
+    readonly accountId?: string | undefined;
     readonly reference?: string | undefined;
     readonly apply: boolean;
   },
@@ -169,11 +193,7 @@ export const accountDisable = async (
   readonly sessions: number;
 }> => {
   const tenantId = await tenantOf(deps, input.organisation);
-  if (input.account === undefined || input.account.trim() === '') {
-    throw new OperatorError('--account is required (the sign-in identifier)');
-  }
-  const account = await deps.security.directory.findByIdentifier(tenantId, input.account);
-  if (account === undefined) throw new OperatorError('No such account in that organisation');
+  const account = await accountOf(deps, tenantId, input);
   const userId = account.userId;
   if (!input.apply) {
     deps.out(`dry run: account ${userId} status=${account.status}; nothing changed (add --apply)`);
@@ -300,9 +320,14 @@ export interface ReencryptResult {
  */
 export const mfaReencrypt = async (
   deps: OperatorDeps,
-  input: { readonly organisation?: string | undefined; readonly apply: boolean },
+  input: {
+    readonly organisation?: string | undefined;
+    readonly reference?: string | undefined;
+    readonly apply: boolean;
+  },
 ): Promise<ReencryptResult> => {
   const tenantId = await tenantOf(deps, input.organisation);
+  const reference = input.apply ? requireReference(input.reference) : undefined;
   const mfa = deps.security.mfa;
   if (mfa === undefined) {
     throw new OperatorError('MFA is not configured in this environment (no MFA_ENCRYPTION_KEYS)');
@@ -315,6 +340,28 @@ export const mfaReencrypt = async (
   let failed = 0;
   if (input.apply) ({ resealed, failed } = await mfa.store.reencryptTenant(tenantId));
   const codes = await mfa.store.recoveryCodesUnderRetiredKeys(tenantId);
+  if (reference !== undefined) {
+    // Counts and key names only: a kid is a label, never key material.
+    await deps.security.audit
+      .write(
+        anonymousAuditEvent(tenantId, toCorrelationId(randomUUID()), {
+          name: 'crypto.key.rotated',
+          outcome: failed > 0 ? 'failure' : 'success',
+          actor: operatorActor(reference),
+          payload: {
+            purpose: 'mfa-secrets',
+            primaryKid: primary,
+            resealed,
+            failed,
+            recoveryCodesUnderRetiredKeys: codes,
+            reference,
+          },
+        }),
+      )
+      .catch((error: unknown) => {
+        deps.out(`warning: the audit record could not be written: ${String(error)}`);
+      });
+  }
   deps.out(
     input.apply
       ? `applied: ${resealed} secret(s) re-sealed under ${primary}, ${failed} failed; ` +

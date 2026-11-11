@@ -58,9 +58,13 @@ database and changing load-balancer logging are owner-approved deployment steps.
 
 ## 5. Access to operator commands (blocking)
 
-- [ ] Running a one-off task of the Identity service definition (on AWS, `ecs:RunTask` on that task
-      definition) is restricted to the operators who may remove a factor or disable an account.
-      That permission carries exactly that power (ADR-0006).
+- [ ] Every permission that can act as the Identity service is restricted to the operators who may
+      remove a factor or disable an account (ADR-0006). On AWS: `ecs:RunTask` on the Identity task
+      definition, `ecs:ExecuteCommand` into Identity tasks, `ecs:RegisterTaskDefinition` /
+      `ecs:UpdateService` with `iam:PassRole` on the Identity task or execution role, and read
+      access to the secrets the task mounts.
+- [ ] Operators pass `--account-id`, not the email identifier, in task overrides (CloudTrail
+      records them).
 - [ ] The lost-device procedure (`docs/runbooks/mfa.md`, "Lost device") is known to every operator:
       out-of-band identity verification, a second operator's approval, a ticket reference.
 

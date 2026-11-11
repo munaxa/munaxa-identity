@@ -319,6 +319,61 @@ describe('mfa-reset (lost device)', () => {
     expect(signedIn.ok).toBe(true);
   });
 
+  it('ends the sessions before removing the factor, so a failure between them is safe and a re-run completes', async () => {
+    const who = await enrolled();
+    const mfa = a.security.mfa as { enroller: NonNullable<SecurityStack['mfa']>['enroller'] };
+    const original = mfa.enroller;
+    mfa.enroller = () => {
+      throw new Error('injected: the process died here');
+    };
+    try {
+      await expect(
+        mfaReset(deps(a), {
+          organisation: org.key,
+          accountId: who.id,
+          reference: 'INC-2001',
+          apply: true,
+        }),
+      ).rejects.toThrow('injected');
+    } finally {
+      mfa.enroller = original;
+    }
+    // What the failure left: no live session, and the factor still in place.
+    expect(await live(who.id)).toHaveLength(0);
+    expect(challengeOf(await login(a, who.email)).kind).toBe('verify');
+
+    const rerun = await mfaReset(deps(a), {
+      organisation: org.key,
+      accountId: who.id,
+      reference: 'INC-2001',
+      apply: true,
+    });
+    expect(rerun.applied).toBe(true);
+    expect(
+      await asOwner('select 1 from identity_mfa_enrollment where account_id = $1', [who.id]),
+    ).toHaveLength(0);
+    expect((await login(a, who.email)).ok).toBe(true);
+  });
+
+  it('takes exactly one of --account-id or --account', async () => {
+    const who = await enrolled();
+    await expect(mfaReset(deps(a), { organisation: org.key, apply: false })).rejects.toBeInstanceOf(
+      OperatorError,
+    );
+    await expect(
+      mfaReset(deps(a), {
+        organisation: org.key,
+        account: who.email,
+        accountId: who.id,
+        apply: false,
+      }),
+    ).rejects.toBeInstanceOf(OperatorError);
+    expect(
+      (await mfaReset(deps(a), { organisation: org.key, accountId: who.id, apply: false }))
+        .accountId,
+    ).toBe(who.id);
+  });
+
   it('sends a policy-covered account straight to enrollment after a reset', async () => {
     const who = await person({ privileged: true });
     const challenge = challengeOf(await login(a, who.email));
@@ -441,9 +496,22 @@ describe('mfa-reencrypt (key rotation)', () => {
       expect(dry.staleSecrets).toBeGreaterThan(0);
       expect(dry.recoveryCodesUnderRetiredKeys).toBeGreaterThan(0);
 
-      const applied = await mfaReencrypt(deps(rotated), { organisation: org.key, apply: true });
+      await expect(
+        mfaReencrypt(deps(rotated), { organisation: org.key, apply: true }),
+      ).rejects.toBeInstanceOf(OperatorError);
+      const applied = await mfaReencrypt(deps(rotated), {
+        organisation: org.key,
+        reference: 'CHG-ROT-1',
+        apply: true,
+      });
       expect(applied).toMatchObject({ failed: 0, applied: true });
       expect(applied.resealed).toBe(dry.staleSecrets);
+      expect(
+        await asOwner(
+          `select 1 from identity_audit_event
+            where event_name = 'crypto.key.rotated' and event::text like '%operator:CHG-ROT-1%'`,
+        ),
+      ).toHaveLength(1);
       expect(
         await asOwner(
           `select 1 from identity_mfa_enrollment where tenant_id = $1 and key_id <> 'mfa-next'`,
