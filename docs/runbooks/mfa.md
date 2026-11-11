@@ -27,6 +27,43 @@ Both tables carry `FORCE ROW LEVEL SECURITY` with the `tenant_isolation` policy 
 has. A database check constraint refuses any `secret_ciphertext` that is not an envelope, so a
 plaintext secret cannot be written even by mistake.
 
+## The flows
+
+| Route                                       | Who may call                                   | Effect                                                                                                                         |
+| ------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /api/auth/login`                      | anyone                                         | Right password + factor needed → `401 AUTH_MFA_REQUIRED` or `AUTH_MFA_ENROLLMENT_REQUIRED`, `__Host-mx_mfa` cookie, no session |
+| `GET /api/auth/mfa`, `/api/auth/mfa/enroll` | anyone                                         | The HTML pages for the two challenges                                                                                          |
+| `POST /api/auth/mfa/verify`                 | `verify` challenge                             | TOTP or recovery code → session cookies, `amr`, `mfa: true`                                                                    |
+| `POST /api/auth/reauthenticate`             | session                                        | Password (+ code when enrolled) → reauth marker for this session                                                               |
+| `POST /api/auth/mfa/enrollment`             | session + recent reauth, or `enroll` challenge | Returns the secret and `otpauth://` URI, once                                                                                  |
+| `POST /api/auth/mfa/enrollment/confirm`     | same                                           | Returns 10 recovery codes, once; revokes other sessions; with a challenge, signs in                                            |
+| `POST /api/auth/mfa/recovery-codes`         | session + recent reauth                        | New set of 10; the old set stops working                                                                                       |
+| `DELETE /api/auth/mfa`                      | session + recent reauth                        | Removes the factor unless policy requires it; revokes other sessions                                                           |
+| `GET /api/auth/mfa/status`                  | session                                        | `enrolled`, `required`, `recoveryCodesRemaining`, `available`, `reauthenticated`                                               |
+
+Configuration: `MFA_POLICY` (`off`/`privileged`/`all`), `MFA_PRIVILEGED_ROLES`, `MFA_CHALLENGE_TTL`
+(default 5m, 1–10m), `MFA_ENROLLMENT_CHALLENGE_TTL` (10m, 1–15m), `MFA_CHALLENGE_MAX_ATTEMPTS` (5),
+`MFA_ACCOUNT_MAX_FAILURES` (10 per `LOGIN_LOCKOUT`), `MFA_REAUTH_WINDOW` (5m, 1–15m), `MFA_ISSUER`.
+
+### Turning enforcement on
+
+1. Deploy with the key ring and `MFA_POLICY=off`; let privileged people enrol from their sessions.
+2. Set `MFA_POLICY=privileged` and `MFA_PRIVILEGED_ROLES` (for example `control-operator-admin`).
+   Anyone in those roles without a factor is now admitted only to enrollment at their next sign-in.
+3. Deal with the sessions those accounts already hold. They were created before enforcement, so
+   they carry `mfa_satisfied = false` and `amr = ["password"]`, and they stay valid until they are
+   revoked or reach `SESSION_IDLE_TIMEOUT` / `SESSION_ABSOLUTE_TIMEOUT`:
+   - **Enrolling at sign-in ends them.** Confirming an enrollment through the enrollment challenge
+     revokes every session the account held (reason `mfa-changed`) before the new, MFA-satisfied
+     session is created. Enrolling from a session revokes every other session the same way.
+   - **An account that does not sign in again** keeps its pre-enforcement sessions until they
+     expire. To end them immediately, the person signs out other sessions
+     (`POST /api/auth/sessions/revoke-others`), or an operator revokes them. A reviewed
+     operator command for that is part of the production hardening work; until it exists, do not
+     treat enforcement as complete for an account until its pre-enforcement sessions have expired.
+   - Downstream services that need assurance should require the `mfa: true` claim rather than
+     assume that enforcement covers every live session.
+
 ## The key ring
 
 `MFA_ENCRYPTION_KEYS` is `kid=key[,kid=key…]`; each key is 32 random bytes, base64url.

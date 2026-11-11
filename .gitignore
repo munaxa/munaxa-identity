@@ -21,3 +21,4 @@ deploy/secrets/*
 
 # Staging environment values, filled in from .env.staging.example.
 deploy/.env
+dump.rdb

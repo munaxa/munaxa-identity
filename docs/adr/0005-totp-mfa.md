@@ -60,13 +60,65 @@ each row under the primary with a compare-and-swap on the old ciphertext; retire
 nothing names it. Recovery-code hashes cannot be re-keyed, so their count under retired kids is
 reported. Procedure: `docs/runbooks/mfa.md`.
 
+**Login challenge.** When the password is right and a factor is needed, no session and no token
+exist. `AuthService` issues a challenge: 256 random bits, held in the shared Redis under
+`sha256(token)` with the tenant, account, token version and a user-agent digest, and handed to the
+browser as `__Host-mx_mfa` (`Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/`, `Max-Age` = TTL).
+`POST /api/auth/mfa/verify` checks a TOTP or a recovery code through Platform's `MfaService`, then
+spends the challenge with a Redis `DEL` (exactly one winner fleet-wide) and only then calls
+`AuthService.completeSignIn`, which creates the session with the methods actually used
+(`['password','totp']` or `['password','recovery-code']`) and `mfaSatisfied: true`, carried into the
+token's `amr` and `mfa` claims and preserved on refresh. Wrong answers count against the challenge
+(`MFA_CHALLENGE_MAX_ATTEMPTS`, then it is destroyed) and against the account across challenges
+(`MFA_ACCOUNT_MAX_FAILURES` per `LOGIN_LOCKOUT` window). A challenge whose account was disabled or
+whose token version moved is refused. The challenge is not a JWT and no route that reads the session
+cookie reads it.
+
+**Policy.** `MFA_POLICY` = `off` | `privileged` (`MFA_PRIVILEGED_ROLES`) | `all`, consulted through
+`LoginService.requireMfa` for accounts with no factor. Such an account gets an `enroll` challenge,
+which admits only to `POST /api/auth/mfa/enrollment` and `/confirm`; confirming spends it and signs
+in with both factors. Configuration refuses enforcement without a key ring and a privileged policy
+without roles. No exemption list, no bypass flag, no emergency account. Machine identities do not
+sign in through this flow. A factor the policy requires cannot be removed by its holder.
+
+**Reauthentication.** Enrolling from a session, replacing, removing, and regenerating recovery codes
+require a session created, or reauthenticated through `POST /api/auth/reauthenticate`, within
+`MFA_REAUTH_WINDOW`. Reauthentication needs the password and, when enrolled, a TOTP or recovery
+code; the marker is per session, in Redis, and spent by the change it authorised. Confirming an
+enrollment or removing a factor revokes every other session of the account; enrolling through the
+enrollment challenge at sign-in revokes every session the account held before the new one exists.
+
+**Attempt limits are reserved, not checked.** Both the per-challenge limit
+(`MFA_CHALLENGE_MAX_ATTEMPTS`) and the per-account limit (`MFA_ACCOUNT_MAX_FAILURES`) are `INCR`ed in
+Redis before the answer is looked at, as Platform's `OtpService` does; only answers within both
+limits reach the factor check, and a correct answer clears the account counter. Checking a counter
+and incrementing it after a wrong answer would let any number of concurrent answers through. A spent
+or locked challenge is refused, not deleted, so a correct answer reserved just before the limit can
+still complete; the record expires with its TTL.
+
+**Password change step-up.** `POST /api/auth/password/change` from an account with an active factor
+also requires that window (`mfa/step-up.ts`), returning 403 `AUTH_REAUTHENTICATION_REQUIRED`
+otherwise. The current password alone is not enough: a stolen session plus a phished password would
+otherwise turn the session into the account. Fails closed (503) when the account is flagged enrolled
+but MFA is not configured. Signing out other sessions (`revoke-others`, `DELETE sessions/:id`) is
+deliberately not gated: it is how a victim evicts an attacker, and it only ever removes access.
+
+**Confirmation step.** `MfaService.confirmTotpEnrollment` does not claim the step it accepted;
+Identity claims it immediately after through the active factor, so the confirmation code cannot be
+replayed at sign-in.
+
 ## Consequences
 
 - Identity contains no TOTP arithmetic and no encryption primitive; the adapter and wiring are
   Identity's, the algorithms are Platform's.
 - Production cannot start without a dedicated MFA key and a distributed replay guard. That is a new
   deployment prerequisite: a secret to provision before the first image built from this code runs.
-- The confirmation code is not claimed by `MfaService.confirmTotpEnrollment`; the enrollment endpoint
-  claims it explicitly so it cannot be replayed at sign-in. Reported to Platform as a follow-up,
-  together with a `regenerateRecoveryCodes` method and a context-bound `protectSecret`, which would
-  let the per-account construction go.
+- Platform follow-ups (reported, not forked): claim the step in `confirmTotpEnrollment`, a
+  `regenerateRecoveryCodes` method (Identity regenerates with `@munaxa/crypto` `recoveryCode` and the
+  same `sha256` Platform uses), and a context-bound `protectSecret`.
+- Sessions that existed before an account became privileged under `MFA_POLICY` stay valid until
+  they expire or are revoked. Enabling enforcement should be followed by revoking the affected
+  accounts' sessions (`docs/runbooks/mfa.md`).
+- A person who holds a required account's password but has never enrolled can enrol their own
+  authenticator (trust on first enrollment). That is inherent to self-service enrollment; accounts
+  should be enrolled by their holders promptly after creation.

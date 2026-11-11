@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { AccessTokenClaims } from '@munaxa/auth';
 import { isPlatformError } from '@munaxa/types';
-import type { CorrelationId, SessionId, TenantId, UserId } from '@munaxa/types';
+import type { AuthMethod, CorrelationId, SessionId, TenantId, UserId } from '@munaxa/types';
 import type { IdentityEnvironment } from '@identity/config';
 
 import { ENVIRONMENT, SECURITY_STACK } from '../tokens.js';
@@ -46,7 +46,19 @@ export type LoginFailure =
    * nothing about whether any account exists.
    */
   | { readonly kind: 'dependency-unavailable'; readonly dependency: 'cache' | 'database' }
-  | { readonly kind: 'mfa-required' }
+  /**
+   * The password was right and a second factor is needed. `challenge` is present when MFA is
+   * available: `verify` for an enrolled account, `enroll` when policy requires MFA and none is
+   * enrolled. Absent, MFA is unavailable in this deployment and the sign-in is simply refused.
+   */
+  | {
+      readonly kind: 'mfa-required';
+      readonly challenge?: {
+        readonly token: string;
+        readonly kind: 'verify' | 'enroll';
+        readonly ttlMs: number;
+      };
+    }
   | { readonly kind: 'password-change-required' }
   | { readonly kind: 'rate-limited'; readonly retryAfterSeconds: number }
   | { readonly kind: 'unknown-organisation' };
@@ -146,24 +158,77 @@ export class AuthService {
     }
 
     if (outcome.status === 'mfa-required') {
-      return { ok: false, failure: { kind: 'mfa-required' } };
+      // No session and no token yet: only a short-lived challenge the MFA routes can redeem. With
+      // MFA unavailable (no key ring, development only) there is nothing to redeem it with, so the
+      // sign-in is refused — never admitted without the factor.
+      if (this.security.mfa === undefined) {
+        return { ok: false, failure: { kind: 'mfa-required' } };
+      }
+      const kind = outcome.account.mfaEnrolled ? 'verify' : 'enroll';
+      const issued = await this.security.mfaChallenges.issue({
+        kind,
+        tenantId,
+        userId: outcome.account.userId,
+        tokenVersion: outcome.account.tokenVersion,
+        userAgent: request.userAgent,
+      });
+      return {
+        ok: false,
+        failure: {
+          kind: 'mfa-required',
+          challenge: {
+            token: issued.token,
+            kind,
+            ttlMs: this.security.mfaChallenges.ttlOf(kind),
+          },
+        },
+      };
     }
     if (outcome.status === 'password-change-required') {
       return { ok: false, failure: { kind: 'password-change-required' } };
     }
 
     const { account } = outcome;
-    const session = await this.security.sessions.create({
+    return this.completeSignIn({
       tenantId,
       userId: account.userId,
+      tokenVersion: account.tokenVersion,
       authMethods: outcome.authMethods,
       mfaSatisfied: false,
-      tokenVersion: account.tokenVersion,
-      ...(request.ipAddress === undefined ? {} : { ipAddress: request.ipAddress }),
-      ...(request.userAgent === undefined ? {} : { userAgent: request.userAgent }),
+      ipAddress: request.ipAddress,
+      userAgent: request.userAgent,
+    });
+  }
+
+  /**
+   * Create the session and mint its tokens. The one place a sign-in becomes a session — after a
+   * password alone (no factor required), or after `MfaFlowService` has redeemed a challenge, in
+   * which case the methods actually used and `mfaSatisfied: true` are recorded on the session and
+   * carried into the token's `amr` and `mfa` claims.
+   */
+  public async completeSignIn(input: {
+    readonly tenantId: TenantId;
+    readonly userId: UserId;
+    readonly tokenVersion: number;
+    readonly authMethods: readonly AuthMethod[];
+    readonly mfaSatisfied: boolean;
+    readonly ipAddress?: string | undefined;
+    readonly userAgent?: string | undefined;
+  }): Promise<LoginResult> {
+    const session = await this.security.sessions.create({
+      tenantId: input.tenantId,
+      userId: input.userId,
+      authMethods: input.authMethods,
+      mfaSatisfied: input.mfaSatisfied,
+      tokenVersion: input.tokenVersion,
+      ...(input.ipAddress === undefined ? {} : { ipAddress: input.ipAddress }),
+      ...(input.userAgent === undefined ? {} : { userAgent: input.userAgent }),
     });
 
-    return this.issue(tenantId, account.userId, account.tokenVersion, session.id);
+    return this.issue(input.tenantId, input.userId, input.tokenVersion, session.id, undefined, {
+      authMethods: session.authMethods,
+      mfaSatisfied: session.mfaSatisfied,
+    });
   }
 
   /** Rotate a session. Classified end to end for the same reason `login` is. */
@@ -254,6 +319,11 @@ export class AuthService {
       account.tokenVersion,
       sessionId,
       rotation.issued.token,
+      // The factors are the session's, fixed at sign-in; a refresh can neither add nor drop one.
+      {
+        authMethods: validation.session.authMethods,
+        mfaSatisfied: validation.session.mfaSatisfied,
+      },
     );
   }
 
@@ -315,6 +385,7 @@ export class AuthService {
     tokenVersion: number,
     sessionId: SessionId | undefined,
     existingRefresh?: string,
+    factors?: { readonly authMethods: readonly string[]; readonly mfaSatisfied: boolean },
   ): Promise<LoginResult> {
     const resolved = await this.security.resolver.resolve(tenantId, userId);
 
@@ -324,6 +395,9 @@ export class AuthService {
       tokenVersion,
       permissions: resolved.permissions,
       ...(sessionId === undefined ? {} : { sessionId }),
+      ...(factors === undefined
+        ? {}
+        : { authMethods: factors.authMethods, mfaSatisfied: factors.mfaSatisfied }),
     });
 
     const refresh =

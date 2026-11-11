@@ -112,6 +112,7 @@ const build = async (overrides: Partial<PasswordChangeOptions> & { cache?: Cache
     revocation: stack.revocation,
     revokeResetLinks: (tenantId, userId) => stack.recovery.revokeOutstanding(tenantId, userId),
     limiter: createChangeLimiter(overrides.cache ?? (await openCache('')).cache),
+    stepUp: async () => 'satisfied',
     audit: stack.audit,
     ...overrides,
   });
@@ -208,6 +209,41 @@ describe('changing a password while signed in', () => {
         correlationId,
       }),
     ).toEqual({ kind: 'invalid-current-password' });
+    expect(await row(userId)).toEqual(before);
+    expect((await stack.sessions.validate(tenant, signedIn.sessionId)).valid).toBe(true);
+  });
+
+  it('refuses before touching anything when the second-factor step-up is missing or unavailable', async () => {
+    const userId = await account();
+    const signedIn = await signIn(userId);
+    const before = await row(userId);
+    for (const [decision, kind] of [
+      ['required', 'reauthentication-required'],
+      ['unavailable', 'unavailable'],
+    ] as const) {
+      const change = await build({ stepUp: async () => decision });
+      expect(
+        await change.change({
+          accessToken: signedIn.access,
+          currentPassword: OLD,
+          newPassword: NEW,
+          correlationId,
+        }),
+      ).toEqual({ kind });
+    }
+    const throwing = await build({
+      stepUp: async () => {
+        throw new Error('cache down');
+      },
+    });
+    expect(
+      await throwing.change({
+        accessToken: signedIn.access,
+        currentPassword: OLD,
+        newPassword: NEW,
+        correlationId,
+      }),
+    ).toEqual({ kind: 'unavailable' });
     expect(await row(userId)).toEqual(before);
     expect((await stack.sessions.validate(tenant, signedIn.sessionId)).valid).toBe(true);
   });
