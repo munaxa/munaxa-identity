@@ -268,6 +268,27 @@ describe('enrollment', () => {
   });
 });
 
+describe('the active view', () => {
+  it('cannot start an enrollment over the live factor, nor confirm one', async () => {
+    const user = await account();
+    const { secret, codes } = await enrol(replicaA, user);
+    const verifier = replicaA.verifier(tenant, user);
+    const [before] = await rowsFor(user);
+
+    await expect(
+      verifier.beginTotpEnrollment(tenant, user, { issuer: 'Munaxa', account: 'x' }),
+    ).rejects.toMatchObject({ code: 'AUTH_MFA_INVALID' });
+    await expect(
+      verifier.confirmTotpEnrollment(tenant, user, totpCode(secret, await steadyNow())),
+    ).rejects.toMatchObject({ code: 'AUTH_MFA_INVALID' });
+
+    const [after] = await rowsFor(user);
+    expect(after!.secret_ciphertext).toBe(before!.secret_ciphertext);
+    // The recovery codes were not regenerated either.
+    expect(await verifier.verifyRecoveryCode(tenant, user, codes[0]!)).toBe(true);
+  });
+});
+
 describe('the secret at rest', () => {
   it('is an AES-256-GCM envelope under the primary key, never the secret itself', async () => {
     const user = await account();

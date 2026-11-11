@@ -85,22 +85,15 @@ export class PrismaMfaEnrollmentStore implements MfaEnrollmentStorePort {
       return;
     }
 
-    // Through the active view a save can only re-seal an existing factor (key rotation). It never
-    // creates one: a factor becomes active only by promotion from a confirmed pending enrollment.
-    const updated = await this.prisma.withTenant(enrollment.tenantId, (tx) =>
-      tx.identityMfaEnrollment.updateMany({
-        where: {
-          tenantId: enrollment.tenantId,
-          accountId: enrollment.userId,
-          method: enrollment.method,
-          state: 'active',
-        },
-        data: { secretCiphertext: enrollment.secret, keyId: kid },
-      }),
-    );
-    if (updated.count !== 1) {
-      throw new PlatformError('No active factor to update', { code: 'AUTH_MFA_INVALID' });
-    }
+    // Through the active view a save is refused outright. A factor becomes active only by
+    // promotion from a confirmed pending enrollment, and re-sealing for key rotation has its own
+    // method (`reencryptTenant`). Accepting a save here would let `verifier().beginTotpEnrollment`
+    // overwrite the live factor with an unconfirmed secret, and `verifier().confirmTotpEnrollment`
+    // regenerate recovery codes without the enrollment path's reauthentication.
+    void kid;
+    throw new PlatformError('The active MFA view does not accept writes', {
+      code: 'AUTH_MFA_INVALID',
+    });
   }
 
   async #savePending(enrollment: MfaEnrollment, kid: string): Promise<void> {

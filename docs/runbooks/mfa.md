@@ -3,6 +3,16 @@
 What MFA is made of in Identity, how its key is provisioned and rotated, and what each failure
 looks like. The decision record is [ADR-0005](../adr/0005-totp-mfa.md).
 
+## Blocking deployment prerequisite
+
+From this release on, **a production-mode Identity (`NODE_ENV=production`) refuses to start**
+unless `MFA_ENCRYPTION_KEYS_FILE` (a mounted secret holding the key ring) and
+`MFA_ENCRYPTION_PRIMARY_KID` are set, and `REDIS_URL` points at the shared Redis. This applies to
+every environment that runs in production mode, including Testing/nonprod on AWS. The image already
+pinned for the first nonprod session (release `5277d71`) predates this and is unaffected; any image
+built from a later `main` needs the secret provisioned first. Provisioning it is an owner-approved
+deployment step and is not done by this repository.
+
 ## What is stored, and where
 
 | Data                       | Where                                             | Form                                                                                                   |
