@@ -74,6 +74,17 @@ describe('readiness', () => {
     expect(probe.missing).toEqual(['identity_account']);
   });
 
+  it('is not ready on a schema that predates the MFA migration', async () => {
+    // A new image rolled before `20261111130000_identity_mfa` ran must not take traffic: every
+    // MFA, step-up and password-change request would fail against the missing tables.
+    const mfaTables = ['identity_mfa_enrollment', 'identity_mfa_recovery_code'];
+    const present = REQUIRED_TABLES.filter((table) => !mfaTables.includes(table));
+    const probe = await probeReadiness(tables(present), security({}));
+    expect(probe.ok).toBe(false);
+    expect(probe.failed).toBe('schema');
+    expect(probe.missing).toEqual(mfaTables);
+  });
+
   it('is not ready when the cache is unreachable', async () => {
     const probe = await probeReadiness(tables(REQUIRED_TABLES), security({ cache: false }));
     expect(probe).toEqual({ ok: false, failed: 'cache' });
