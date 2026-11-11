@@ -14,6 +14,8 @@ import { SessionManager } from '@munaxa/session';
 import { toCorrelationId, type EpochMillis } from '@munaxa/types';
 import type { IdentityEnvironment } from '@identity/config';
 
+import { buildMfaKeys } from '../mfa/mfa-keys.js';
+import { buildIdentityMfa, type IdentityMfa } from '../mfa/mfa-runtime.js';
 import { AccountLockdown, CredentialRevocation } from '../account/credential-revocation.js';
 import { PrismaAuditRepository } from '../persistence/audit-repository.adapter.js';
 import { PrismaRefreshTokenStore } from '../persistence/refresh-token-store.adapter.js';
@@ -64,8 +66,39 @@ export interface SecurityStack {
   /** Whether the cache is reachable right now. Readiness asks; see `CacheHandle.reachable`. */
   cacheReachable(): Promise<boolean>;
   readonly limitEnforcement: string;
+  /**
+   * TOTP multi-factor authentication, or `undefined` when no MFA key ring is configured — which
+   * the configuration allows only outside production. Absent means unavailable, never unencrypted:
+   * an account already enrolled is then refused at sign-in rather than let through.
+   */
+  readonly mfa: IdentityMfa | undefined;
   close(): Promise<void>;
 }
+
+/** How long a started TOTP enrollment stays confirmable. */
+export const MFA_PENDING_ENROLLMENT_TTL_MS = 15 * 60 * 1_000;
+
+/**
+ * Refuse to run in production with replay protection that holds on one replica only.
+ *
+ * The configuration already requires `REDIS_URL` in production; this checks what was actually
+ * built, so a future change to either cannot quietly leave MFA codes replayable across pods.
+ */
+export const assertMfaDistributed = (
+  environment: Pick<IdentityEnvironment, 'MUNAXA_ENV'>,
+  cacheKind: 'redis' | 'memory',
+  mfa: IdentityMfa | undefined,
+): void => {
+  if (environment.MUNAXA_ENV !== 'production') return;
+  if (mfa === undefined) {
+    throw new Error('Refusing to start: production requires MFA (MFA_ENCRYPTION_KEYS).');
+  }
+  if (cacheKind !== 'redis' || !mfa.distributed) {
+    throw new Error(
+      'Refusing to start: production requires the MFA replay guard on the shared Redis cache.',
+    );
+  }
+};
 
 export const buildSecurityStack = async (
   environment: IdentityEnvironment,
@@ -85,6 +118,26 @@ export const buildSecurityStack = async (
   void new PrismaResetTokenStore(prisma);
 
   const audit = new AuditService({ repository: auditRepository });
+
+  const mfaKeys = buildMfaKeys(
+    environment.MFA_ENCRYPTION_KEYS,
+    environment.MFA_ENCRYPTION_PRIMARY_KID,
+  );
+  const mfa =
+    mfaKeys === undefined
+      ? undefined
+      : buildIdentityMfa({
+          prisma,
+          keys: mfaKeys,
+          replayGuard: cache,
+          pendingTtlMs: MFA_PENDING_ENROLLMENT_TTL_MS,
+        });
+  try {
+    assertMfaDistributed(environment, handle.kind, mfa);
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
 
   const signing = loadSigningKey({
     algorithm: environment.IDENTITY_SIGNING_ALGORITHM,
@@ -215,6 +268,7 @@ export const buildSecurityStack = async (
     cacheKind: handle.kind,
     cacheReachable: () => handle.reachable(),
     limitEnforcement: sessions.limitEnforcement,
+    mfa,
     close: () => handle.close(),
   };
 };

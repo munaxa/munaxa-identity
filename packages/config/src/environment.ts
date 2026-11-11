@@ -18,6 +18,8 @@ import {
   type Resolved,
 } from '@munaxa/config';
 
+import { parseMfaKeys, reusesSecret } from './mfa-keys.js';
+
 /**
  * Identity's environment contract.
  *
@@ -165,6 +167,17 @@ export const IDENTITY_SCHEMA = extendConfig(
     IDENTITY_DEFAULT_ORGANISATION: string({ default: '' }),
 
     /**
+     * The MFA encryption key ring: `kid=base64key[,kid=base64key…]`, 32 random bytes each.
+     *
+     * Dedicated to sealing TOTP secrets and keying recovery-code hashes, and checked below not to
+     * be the signing private key or `IDENTITY_SIGNING_SECRET` (the refresh-token pepper) under
+     * another name. Supplied as `MFA_ENCRYPTION_KEYS_FILE` like every other secret. Required in
+     * production; empty in development means MFA is unavailable, never that it runs unencrypted.
+     */
+    MFA_ENCRYPTION_KEYS: string({ secret: true, default: '', minLength: 0 }),
+    /** Which entry of `MFA_ENCRYPTION_KEYS` new secrets are sealed under. Not secret. */
+    MFA_ENCRYPTION_PRIMARY_KID: string({ default: '' }),
+    /**
      * What a person's session list shows about where each session came from.
      *
      * `prefix` (the default) shows the network — `203.0.113.0/24`, or the /48 of an IPv6
@@ -216,6 +229,8 @@ export const IDENTITY_SCHEMA = extendConfig(
             'must list the public origin the browser posts from. Empty means every cross-site post is accepted.',
         });
       }
+      issues.push(...mfaKeyIssues(resolved, production));
+
       if (production) {
         if (resolved.MUNAXA_REDIS_URL === '') {
           issues.push({
@@ -234,6 +249,77 @@ export const IDENTITY_SCHEMA = extendConfig(
 );
 
 export type IdentityEnvironment = Resolved<typeof IDENTITY_SCHEMA.fields>;
+
+/**
+ * Everything that can be wrong with the MFA key ring, reported by name and never by value.
+ *
+ * Production requires a ring because MFA is part of the authentication contract there: a service
+ * that started without one would either refuse every enrolled user or — the outcome this exists to
+ * prevent — be patched to run without encryption. Development may omit it, and MFA is then simply
+ * unavailable.
+ */
+function mfaKeyIssues(
+  resolved: {
+    readonly MFA_ENCRYPTION_KEYS: string;
+    readonly MFA_ENCRYPTION_PRIMARY_KID: string;
+    readonly MUNAXA_SIGNING_SECRET: string;
+    readonly IDENTITY_SIGNING_PRIVATE_KEY: string;
+  },
+  production: boolean,
+): { key: string; problem: string }[] {
+  const issues: { key: string; problem: string }[] = [];
+  const raw = resolved.MFA_ENCRYPTION_KEYS.trim();
+  const primary = resolved.MFA_ENCRYPTION_PRIMARY_KID.trim();
+
+  if (raw === '') {
+    if (production) {
+      issues.push({
+        key: 'MFA_ENCRYPTION_KEYS',
+        problem:
+          'is required in production. TOTP secrets are encrypted at rest under this dedicated key ring; supply it through MFA_ENCRYPTION_KEYS_FILE.',
+      });
+    }
+    if (primary !== '') {
+      issues.push({
+        key: 'MFA_ENCRYPTION_PRIMARY_KID',
+        problem: 'names a key, but MFA_ENCRYPTION_KEYS is empty.',
+      });
+    }
+    return issues;
+  }
+
+  const { entries, problems } = parseMfaKeys(raw);
+  for (const problem of problems) issues.push({ key: 'MFA_ENCRYPTION_KEYS', problem });
+  if (entries.length === 0 && problems.length === 0) {
+    issues.push({ key: 'MFA_ENCRYPTION_KEYS', problem: 'contains no key.' });
+  }
+  if (primary === '') {
+    issues.push({
+      key: 'MFA_ENCRYPTION_PRIMARY_KID',
+      problem: 'is required when MFA_ENCRYPTION_KEYS is set: it names the key new secrets use.',
+    });
+  } else if (entries.length > 0 && !entries.some((entry) => entry.kid === primary)) {
+    issues.push({
+      key: 'MFA_ENCRYPTION_PRIMARY_KID',
+      problem: `names ${primary}, which is not a key in MFA_ENCRYPTION_KEYS.`,
+    });
+  }
+  for (const entry of entries) {
+    if (reusesSecret(entry.key, resolved.MUNAXA_SIGNING_SECRET)) {
+      issues.push({
+        key: 'MFA_ENCRYPTION_KEYS',
+        problem: `key ${entry.kid} is IDENTITY_SIGNING_SECRET. The MFA key must be dedicated material.`,
+      });
+    }
+    if (reusesSecret(entry.key, resolved.IDENTITY_SIGNING_PRIVATE_KEY)) {
+      issues.push({
+        key: 'MFA_ENCRYPTION_KEYS',
+        problem: `key ${entry.kid} is taken from the signing private key. The MFA key must be dedicated material.`,
+      });
+    }
+  }
+  return issues;
+}
 
 /**
  * Read `NAME` from the file named by `NAME_FILE`, wherever one is set.

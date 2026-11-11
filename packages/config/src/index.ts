@@ -5,3 +5,4 @@ export {
   loadEnvironment,
   type IdentityEnvironment,
 } from './environment.js';
+export { parseMfaKeys, reusesSecret, type MfaKeyEntry, type ParsedMfaKeys } from './mfa-keys.js';

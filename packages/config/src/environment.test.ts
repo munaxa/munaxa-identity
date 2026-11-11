@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, randomBytes } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
@@ -149,8 +149,135 @@ describe('production fails closed', () => {
     ).toThrowError(/LOG_PRETTY/);
   });
 
+  it('requires the MFA key ring', () => {
+    expect(() => loadEnvironment({ ...production, REDIS_URL: 'redis://cache:6379' })).toThrowError(
+      /MFA_ENCRYPTION_KEYS: is required in production/,
+    );
+  });
+
   it('accepts a complete production environment', () => {
-    expect(() => loadEnvironment({ ...production, REDIS_URL: 'redis://cache:6379' })).not.toThrow();
+    expect(() =>
+      loadEnvironment({ ...production, REDIS_URL: 'redis://cache:6379', ...MFA }),
+    ).not.toThrow();
+  });
+});
+
+const MFA_KEY = randomBytes(32).toString('base64url');
+const MFA = { MFA_ENCRYPTION_KEYS: `mfa-1=${MFA_KEY}`, MFA_ENCRYPTION_PRIMARY_KID: 'mfa-1' };
+
+describe('the MFA key ring', () => {
+  it('is optional in development, where MFA is then unavailable', () => {
+    const env = loadEnvironment(complete);
+    expect(env.MFA_ENCRYPTION_KEYS).toBe('');
+  });
+
+  it('resolves a ring with a primary and a retired key', () => {
+    const retired = randomBytes(32).toString('base64');
+    const env = loadEnvironment({
+      ...complete,
+      MFA_ENCRYPTION_KEYS: `mfa-1=${MFA_KEY}, mfa-0=${retired}`,
+      MFA_ENCRYPTION_PRIMARY_KID: 'mfa-1',
+    });
+    expect(env.MFA_ENCRYPTION_PRIMARY_KID).toBe('mfa-1');
+  });
+
+  it('refuses a key that is not 32 bytes, without echoing it', () => {
+    const short = randomBytes(16).toString('base64url');
+    let message = '';
+    try {
+      loadEnvironment({
+        ...complete,
+        MFA_ENCRYPTION_KEYS: `k=${short}`,
+        MFA_ENCRYPTION_PRIMARY_KID: 'k',
+      });
+    } catch (error) {
+      message = String(error);
+    }
+    expect(message).toMatch(/key k is not 32 bytes/);
+    expect(message).not.toContain(short);
+  });
+
+  it('refuses a ring with no primary, or a primary it does not contain', () => {
+    expect(() =>
+      loadEnvironment({ ...complete, MFA_ENCRYPTION_KEYS: `a=${MFA_KEY}` }),
+    ).toThrowError(/MFA_ENCRYPTION_PRIMARY_KID: is required/);
+    expect(() =>
+      loadEnvironment({
+        ...complete,
+        MFA_ENCRYPTION_KEYS: `a=${MFA_KEY}`,
+        MFA_ENCRYPTION_PRIMARY_KID: 'b',
+      }),
+    ).toThrowError(/names b, which is not a key/);
+  });
+
+  it('refuses duplicate key ids and malformed entries', () => {
+    expect(() =>
+      loadEnvironment({
+        ...complete,
+        MFA_ENCRYPTION_KEYS: `a=${MFA_KEY},a=${MFA_KEY}`,
+        MFA_ENCRYPTION_PRIMARY_KID: 'a',
+      }),
+    ).toThrowError(/more than once/);
+    expect(() =>
+      loadEnvironment({
+        ...complete,
+        MFA_ENCRYPTION_KEYS: MFA_KEY,
+        MFA_ENCRYPTION_PRIMARY_KID: 'a',
+      }),
+    ).toThrowError(/not of the form kid=key/);
+  });
+
+  it('refuses a repeated-byte key', () => {
+    expect(() =>
+      loadEnvironment({
+        ...complete,
+        MFA_ENCRYPTION_KEYS: `a=${Buffer.alloc(32, 7).toString('base64')}`,
+        MFA_ENCRYPTION_PRIMARY_KID: 'a',
+      }),
+    ).toThrowError(/repeated byte/);
+  });
+
+  it('refuses the signing secret — the refresh-token pepper — as the MFA key', () => {
+    const pepper = randomBytes(32);
+    expect(() =>
+      loadEnvironment({
+        ...complete,
+        IDENTITY_SIGNING_SECRET: pepper.toString('base64url'),
+        MFA_ENCRYPTION_KEYS: `a=${pepper.toString('base64url')}`,
+        MFA_ENCRYPTION_PRIMARY_KID: 'a',
+      }),
+    ).toThrowError(/is IDENTITY_SIGNING_SECRET/);
+    const textual = 'p'.repeat(16) + 'q'.repeat(16);
+    expect(() =>
+      loadEnvironment({
+        ...complete,
+        IDENTITY_SIGNING_SECRET: textual,
+        MFA_ENCRYPTION_KEYS: `a=${Buffer.from(textual).toString('base64')}`,
+        MFA_ENCRYPTION_PRIMARY_KID: 'a',
+      }),
+    ).toThrowError(/is IDENTITY_SIGNING_SECRET/);
+  });
+
+  it('is read from a secret file and never rendered', () => {
+    const env = loadEnvironment(
+      {
+        ...complete,
+        MFA_ENCRYPTION_KEYS_FILE: '/run/secrets/mfa',
+        MFA_ENCRYPTION_PRIMARY_KID: 'mfa-1',
+      },
+      (path) => {
+        if (path !== '/run/secrets/mfa') throw new Error('no such file');
+        return `mfa-1=${MFA_KEY}\n`;
+      },
+    );
+    expect(env.MFA_ENCRYPTION_KEYS).toBe(`mfa-1=${MFA_KEY}`);
+    expect(JSON.stringify(describeEnvironment(env))).not.toContain(MFA_KEY);
+  });
+
+  it('names a primary only when there is a ring', () => {
+    expect(() => loadEnvironment({ ...complete, MFA_ENCRYPTION_PRIMARY_KID: 'a' })).toThrowError(
+      /MFA_ENCRYPTION_KEYS is empty/,
+    );
   });
 });
 
