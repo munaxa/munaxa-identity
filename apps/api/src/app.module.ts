@@ -6,11 +6,14 @@ import {
 } from '@nestjs/common';
 import { loadEnvironment, type IdentityEnvironment } from '@identity/config';
 
+import type { Logger } from 'pino';
+
 import { AccountSessionsController } from './account/account-sessions.controller.js';
 import { AccountSessionsService } from './account/account-sessions.service.js';
 import { AuthController } from './auth/auth.controller.js';
 import { AuthService } from './auth/auth.service.js';
 import { HealthController } from './health/health.controller.js';
+import { PasswordRecoveryController } from './password/password-recovery.controller.js';
 import { PrismaService } from './persistence/prisma.service.js';
 import { buildSecurityStack, type SecurityStack } from './platform/security.js';
 import { createLogger } from './observability/logger.js';
@@ -26,7 +29,12 @@ import { ENVIRONMENT, LOGGER, SECURITY_STACK } from './tokens.js';
  * two of them to disagree about which store they are talking to.
  */
 @Module({
-  controllers: [AuthController, AccountSessionsController, HealthController],
+  controllers: [
+    AuthController,
+    AccountSessionsController,
+    HealthController,
+    PasswordRecoveryController,
+  ],
   providers: [
     PrismaService,
     AuthService,
@@ -41,11 +49,12 @@ import { ENVIRONMENT, LOGGER, SECURITY_STACK } from './tokens.js';
     },
     {
       provide: SECURITY_STACK,
-      inject: [ENVIRONMENT, PrismaService],
+      inject: [ENVIRONMENT, PrismaService, LOGGER],
       useFactory: (
         environment: IdentityEnvironment,
         prisma: PrismaService,
-      ): Promise<SecurityStack> => buildSecurityStack(environment, prisma),
+        logger: Logger,
+      ): Promise<SecurityStack> => buildSecurityStack(environment, prisma, logger),
     },
   ],
   exports: [ENVIRONMENT, LOGGER, SECURITY_STACK, PrismaService],

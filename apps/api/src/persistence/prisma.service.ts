@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import { Inject, Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import type { IdentityEnvironment } from '@identity/config';
 
@@ -41,12 +43,76 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     await this.$disconnect();
   }
 
-  /** Run `work` in a transaction whose row-level security context is `tenantId`. */
+  /**
+   * The transaction a unit of work is running, if any. See `unitOfWork`.
+   *
+   * Held in async-local storage rather than passed down, because the code between the unit of
+   * work and the adapters is Platform's — `PasswordResetService.complete` calls the ports itself,
+   * and its signatures carry no transaction. The adapters already funnel every statement through
+   * `withTenant`, so that is the one place that needs to know.
+   */
+  private readonly ambient = new AsyncLocalStorage<{
+    readonly tenantId: string;
+    readonly tx: TenantClient;
+  }>();
+
+  /**
+   * Run `work` in a transaction whose row-level security context is `tenantId`.
+   *
+   * Inside a `unitOfWork` for the same organisation this joins that transaction instead of opening
+   * its own, so a sequence of port calls commits or rolls back together. Inside a unit of work for
+   * a *different* organisation it refuses: silently running one organisation's statement inside
+   * another's row-level security context is the failure this whole class exists to prevent.
+   */
   public withTenant<T>(tenantId: string, work: (tx: TenantClient) => Promise<T>): Promise<T> {
+    const ambient = this.ambient.getStore();
+    if (ambient !== undefined) {
+      if (ambient.tenantId !== tenantId) {
+        return Promise.reject(
+          new Error('withTenant: a unit of work for one organisation cannot touch another'),
+        );
+      }
+      return work(ambient.tx);
+    }
     return this.$transaction(async (tx) => {
       await tx.$executeRaw`select set_config('identity.tenant_id', ${tenantId}::text, true)`;
       return work(tx as unknown as TenantClient);
     });
+  }
+
+  /**
+   * Run `work` as one transaction: every `withTenant` it reaches, directly or through Platform,
+   * commits together or not at all.
+   *
+   * This exists for sequences whose intermediate states are unsafe — a reset token consumed with
+   * the password unchanged, or a password changed with the old sessions still valid. PostgreSQL
+   * guarantees the rollback even when the process dies mid-way: an uncommitted transaction does not
+   * survive its connection.
+   *
+   * Rules for `work`: await everything it starts (a statement issued after the callback returns
+   * meets a closed transaction), and keep anything that is not this database — email, audit fan-out,
+   * cache writes — outside it, after it commits.
+   */
+  public unitOfWork<T>(
+    tenantId: string,
+    work: () => Promise<T>,
+    options: { readonly timeoutMs?: number } = {},
+  ): Promise<T> {
+    if (this.ambient.getStore() !== undefined) {
+      return Promise.reject(new Error('unitOfWork: units of work do not nest'));
+    }
+    return this.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`select set_config('identity.tenant_id', ${tenantId}::text, true)`;
+        return this.ambient.run({ tenantId, tx: tx as unknown as TenantClient }, work);
+      },
+      { timeout: options.timeoutMs ?? 15_000, maxWait: 5_000 },
+    );
+  }
+
+  /** Whether the caller is inside a unit of work. For assertions, not for branching. */
+  public get inUnitOfWork(): boolean {
+    return this.ambient.getStore() !== undefined;
   }
 }
 
