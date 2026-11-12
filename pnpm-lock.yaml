@@ -40,35 +40,35 @@ importers:
         specifier: workspace:*
         version: link:../../packages/config
       '@munaxa/audit':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/auth':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/cache':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/config':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/crypto':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/interfaces':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/rbac':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/security':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/session':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/types':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@nestjs/common':
         specifier: ^11.0.0
         version: 11.2.3(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -146,11 +146,11 @@ importers:
   packages/config:
     dependencies:
       '@munaxa/config':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/types':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
     devDependencies:
       '@types/node':
         specifier: ^22.20.1
@@ -172,20 +172,20 @@ importers:
         version: 8.23.0
     devDependencies:
       '@munaxa/auth':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/conformance':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/crypto':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/interfaces':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@munaxa/types':
-        specifier: ^2.4.1
-        version: 2.4.1
+        specifier: ^2.5.0
+        version: 2.5.0
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1
@@ -770,99 +770,99 @@ packages:
       }
     engines: { node: '>=8' }
 
-  '@munaxa/audit@2.4.1':
+  '@munaxa/audit@2.5.0':
     resolution:
       {
-        integrity: sha512-L5C8IjZjK86v0XsA82aU+WMaN0WgGZTnN0s8upuIcjHlvA81XwxhtWGGJ+lzW1uD37gCQw+19L6RZclECLPYyQ==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/audit/2.4.1/f37633f21f97a9cffd5afc8334c25ae06e70a6cc,
+        integrity: sha512-LfjMZyGawUICbqrwVhGOJJoehghQ7MLkSKArUEl0BiO+F5Ln2w+/ceii5711P4oKLp2z1q+NlN41yKaOFsBazw==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-audit-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
-  '@munaxa/auth@2.4.1':
+  '@munaxa/auth@2.5.0':
     resolution:
       {
-        integrity: sha512-SPxoJtZp+5AMhfsp7R592OlTRS9jtqcdHBbwAVdq40TVSiRx1uBHuIpUFMy8yjsqk7NZ1r5Y2INtQBUm1WnC5w==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/auth/2.4.1/aba943e99e00d3801620aa5d9ef29d2392e21a2a,
+        integrity: sha512-KoLecWsGLkmSh2o1uVPdlzPoMrQZb3uZFsq19sKGKsiLZktXC4oqeYLHCdLpDm3t8mC3sucT15b6c8wM60mCUg==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-auth-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
-  '@munaxa/cache@2.4.1':
+  '@munaxa/cache@2.5.0':
     resolution:
       {
-        integrity: sha512-bI5VevRhl26j0AGCTc4rDe5tQShB4O6U+6A52YN+NG7EfJgtMc/L3G4kxChCEsSAp8Vcqyux7arIHhW8qFtxfQ==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/cache/2.4.1/da2ed57f633c70e75b9f4b89489108278a9b70e0,
+        integrity: sha512-CcSr31c722nGRkDQoFBOqVfzi0cs57QMFlVd0kDGOPhW37G8g7WBuNt+wvSc2ji8Cyafz3GN3cgfWL0WtJFo2w==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-cache-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
-  '@munaxa/config@2.4.1':
+  '@munaxa/config@2.5.0':
     resolution:
       {
-        integrity: sha512-8s3xnNN9w2GKIrlbRmoxUqeaxBIypzjNvkLZ0cWU8CvQVc0EoNxSNZSuPMtrJGJIKJ+j5rpVXnLF04cJOJSrUg==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/config/2.4.1/0d8873b09c6de3c7a03d555b82362778c7d39582,
+        integrity: sha512-RGzZ+G7OJIiBPDf4urJV2Ef+A4sFD2dp0sKaRChZ5fo5CVSGOx2KGsD7LXy4TW3peSdZ0xb4RztY9VrHxza2YA==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-config-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
-  '@munaxa/conformance@2.4.1':
+  '@munaxa/conformance@2.5.0':
     resolution:
       {
-        integrity: sha512-nLb13ewOMOEGJBSqOaO+cZtp7KhQgMysHdh0x5hiDQpbFqPsFeb1682AyCGeFf4tjZiKkLFsxdd3AGLgaRH71Q==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/conformance/2.4.1/82d41e6173f0038a60c3eb151bbe62487cca9797,
+        integrity: sha512-BO3hspYzOIMnjZ3tmthe7NqrqXds07C7LbYeYgVT6dC89Y7D5OpwNBjb16gvTJjqQl49zJB7WeYEf46iBTd4Yg==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-conformance-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
-  '@munaxa/crypto@2.4.1':
+  '@munaxa/crypto@2.5.0':
     resolution:
       {
-        integrity: sha512-lwpqkVxalAqs+ckGLJ5wd0JxMp01W41yU9eMM8MyxGdotQ5jzJgkKbzJHcv+K/0DCgXZuXJNlIurdGZrqN9sqA==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/crypto/2.4.1/27441011962d39c0d0588eb8e3a5ae2a4185e8fd,
+        integrity: sha512-KCizatT0QgBqyFpwrbqlTBTuDZXfiH/pILBgldjwe/45C2gD4sw4+3i6yDnb+H8n2vJQccJEgGYixA/5/nyA5A==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-crypto-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
-  '@munaxa/interfaces@2.4.1':
+  '@munaxa/interfaces@2.5.0':
     resolution:
       {
-        integrity: sha512-e/tEr/mYogfPajdJBj8OJFR2IiR6ct4EXbC+mjJtWk3ZyiP1T6QyJa/1hk2rkX/Z4dEfJOxw3uJH4v09otBoaw==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/interfaces/2.4.1/4db4cd85134def8e03bf5d8f54a3d59331f97df1,
+        integrity: sha512-4Thy5D+Eem6rCPtzLCMZrX/ibEunuJfT2YgIeVvGdPcZCJM3JkuoIVUhdub96aw93F1RcYT/l7W2F9V0b96v4Q==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-interfaces-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
-  '@munaxa/logging@2.4.1':
+  '@munaxa/logging@2.5.0':
     resolution:
       {
-        integrity: sha512-Phz2qRgcqV60wENw5R2icF5oH4G1TGNWnHNrCRiXiwty7cqKKpPnvOPeZ3XDUdjHfiSROHLAzZo6MrkBHsN4fQ==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/logging/2.4.1/a39c6bbd8d185236f9eb50cb48dd3a6c3260f977,
+        integrity: sha512-9HhanndJOhNQy+6s42wWsvqqMAugocl7etL4gAUWSpXGM1JePPIraVg6fPtNENyyFV7MWoBYS6K55JbbwA1BSw==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-logging-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
-  '@munaxa/rbac@2.4.1':
+  '@munaxa/rbac@2.5.0':
     resolution:
       {
-        integrity: sha512-UDTAQjj1S8F/In1ddZjtfa/4glO8TfhPhPy83hKDwr9vyrwmnF950rvuiAbVyHDJz37a07AMOOxXYfTV33d8/w==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/rbac/2.4.1/a5e6897238d1d7102b43aebc975fa13d0781b0cb,
+        integrity: sha512-Vu4Zh+mrXejfWD7s7zxKlpTg4K0SNsiNl1l0wG6U62p8RCAvCSHvE/CWTWk3NQ6BcGLUWXJaBWxRAIOoY2tF+g==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-rbac-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
-  '@munaxa/security@2.4.1':
+  '@munaxa/security@2.5.0':
     resolution:
       {
-        integrity: sha512-Bkb7ISVJs0MN9MTlqZy3IrGRtbzCbDVl2UV/KxyIkGAxfOD1p1iedstohemNI1WTdYUKStsS05QyzETWxFatEw==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/security/2.4.1/4e496301967062792d41013fd01610f5ece57d8e,
+        integrity: sha512-MFYl77WyfE8MqdHwbnSXIwI/FwCmAUHK3C8sNkNlO/Y6fcLqNEdMqGuskUvsMWj7rjsrQ2iJaTObD9ukbYRcCA==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-security-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
-  '@munaxa/session@2.4.1':
+  '@munaxa/session@2.5.0':
     resolution:
       {
-        integrity: sha512-SOqngAxgmCQU5pw94iP9D44FAAIgj1tywibz2tDvHMZp8ocLhGhGVEE88GmQFZTSqePW16URH0kjvWcPQxUq2w==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/session/2.4.1/f81b593fa40fb566af2188342a98fb1e3b06f2f7,
+        integrity: sha512-sswECZ0H49aHiCB21SezwnMMoToNEUn53L1RnjOZTxfTJSlFtRB2bSmKzwTNXLCU0FKC0jZKMfWKTWycSe5yqQ==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-session-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
-  '@munaxa/types@2.4.1':
+  '@munaxa/types@2.5.0':
     resolution:
       {
-        integrity: sha512-2r4zSkoT6HSmPecNXlokSDyUgpPV9I4rqDIuTXnssR3vyvr9Px/wWv3Y0XxaHlmupOrKTcoRxevU9gykKtYmcg==,
-        tarball: https://npm.pkg.github.com/download/@munaxa/types/2.4.1/2bcf26d26f9f9313ea3434ad7c41c08d110bbd9b,
+        integrity: sha512-/8oRfcyez/CnQ0hYkpzwEUmRjqbZSX5aoaZN/93Wm7agqSiQ3b6xs55O6c0rb1srIHzrrSHl50vJ55rRRY1kHQ==,
+        tarball: http://127.0.0.1:4874/tarballs/munaxa-types-2.5.0.tgz,
       }
     engines: { node: '>=22.12.0' }
 
@@ -4426,65 +4426,65 @@ snapshots:
 
   '@lukeed/csprng@1.1.0': {}
 
-  '@munaxa/audit@2.4.1':
+  '@munaxa/audit@2.5.0':
     dependencies:
-      '@munaxa/interfaces': 2.4.1
-      '@munaxa/logging': 2.4.1
-      '@munaxa/types': 2.4.1
+      '@munaxa/interfaces': 2.5.0
+      '@munaxa/logging': 2.5.0
+      '@munaxa/types': 2.5.0
 
-  '@munaxa/auth@2.4.1':
+  '@munaxa/auth@2.5.0':
     dependencies:
-      '@munaxa/crypto': 2.4.1
-      '@munaxa/interfaces': 2.4.1
-      '@munaxa/types': 2.4.1
+      '@munaxa/crypto': 2.5.0
+      '@munaxa/interfaces': 2.5.0
+      '@munaxa/types': 2.5.0
 
-  '@munaxa/cache@2.4.1':
+  '@munaxa/cache@2.5.0':
     dependencies:
-      '@munaxa/interfaces': 2.4.1
-      '@munaxa/types': 2.4.1
+      '@munaxa/interfaces': 2.5.0
+      '@munaxa/types': 2.5.0
 
-  '@munaxa/config@2.4.1':
+  '@munaxa/config@2.5.0':
     dependencies:
-      '@munaxa/interfaces': 2.4.1
-      '@munaxa/types': 2.4.1
+      '@munaxa/interfaces': 2.5.0
+      '@munaxa/types': 2.5.0
 
-  '@munaxa/conformance@2.4.1':
+  '@munaxa/conformance@2.5.0':
     dependencies:
-      '@munaxa/interfaces': 2.4.1
-      '@munaxa/types': 2.4.1
+      '@munaxa/interfaces': 2.5.0
+      '@munaxa/types': 2.5.0
 
-  '@munaxa/crypto@2.4.1':
+  '@munaxa/crypto@2.5.0':
     dependencies:
-      '@munaxa/types': 2.4.1
+      '@munaxa/types': 2.5.0
 
-  '@munaxa/interfaces@2.4.1':
+  '@munaxa/interfaces@2.5.0':
     dependencies:
-      '@munaxa/types': 2.4.1
+      '@munaxa/types': 2.5.0
 
-  '@munaxa/logging@2.4.1':
+  '@munaxa/logging@2.5.0':
     dependencies:
-      '@munaxa/interfaces': 2.4.1
-      '@munaxa/types': 2.4.1
+      '@munaxa/interfaces': 2.5.0
+      '@munaxa/types': 2.5.0
 
-  '@munaxa/rbac@2.4.1':
+  '@munaxa/rbac@2.5.0':
     dependencies:
-      '@munaxa/interfaces': 2.4.1
-      '@munaxa/types': 2.4.1
+      '@munaxa/interfaces': 2.5.0
+      '@munaxa/types': 2.5.0
 
-  '@munaxa/security@2.4.1':
+  '@munaxa/security@2.5.0':
     dependencies:
-      '@munaxa/cache': 2.4.1
-      '@munaxa/crypto': 2.4.1
-      '@munaxa/interfaces': 2.4.1
-      '@munaxa/types': 2.4.1
+      '@munaxa/cache': 2.5.0
+      '@munaxa/crypto': 2.5.0
+      '@munaxa/interfaces': 2.5.0
+      '@munaxa/types': 2.5.0
 
-  '@munaxa/session@2.4.1':
+  '@munaxa/session@2.5.0':
     dependencies:
-      '@munaxa/crypto': 2.4.1
-      '@munaxa/interfaces': 2.4.1
-      '@munaxa/types': 2.4.1
+      '@munaxa/crypto': 2.5.0
+      '@munaxa/interfaces': 2.5.0
+      '@munaxa/types': 2.5.0
 
-  '@munaxa/types@2.4.1': {}
+  '@munaxa/types@2.5.0': {}
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true

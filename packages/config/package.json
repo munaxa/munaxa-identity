@@ -18,8 +18,8 @@
     "lint": "echo 'lint: covered by typecheck and format:check'"
   },
   "dependencies": {
-    "@munaxa/config": "^2.4.1",
-    "@munaxa/types": "^2.4.1"
+    "@munaxa/config": "^2.5.0",
+    "@munaxa/types": "^2.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

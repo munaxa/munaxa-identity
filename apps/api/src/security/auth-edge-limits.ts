@@ -20,9 +20,11 @@ import { ROOT_TENANT_ID, type Clock } from '@munaxa/types';
  * limiter (2.4.1) restarts an adaptive rule's count after each refusal and admits on a store
  * failure. These rules are non-adaptive (so the count is one stable counter per rule and subject,
  * refusals included) and each is evaluated by a limiter of its own, so a store failure is seen per
- * rule and refused (`unavailable`, 503) rather than admitted. Adopting a later Platform release
- * needs its own review: munaxa-platform#107 changes how malformed counter values and IPv6 addresses
- * are treated, and this module must be re-tested against it (it is pinned to 2.4.1 behaviour).
+ * rule and refused (`unavailable`, 503) rather than admitted. Platform 2.5.0 (munaxa-platform#107)
+ * fixes both defects in its own limiter; these rules stay Identity's own all the same, and were
+ * re-tested on 2.5.0: its `RateLimiter` now applies Platform's `addressSubject` to every `ip` rule,
+ * which leaves the subject below unchanged (the two functions agree, and a /64 subject maps to
+ * itself), and a malformed counter value is a store failure, which these rules already refuse.
  *
  * **Addresses.** IPv6 clients are counted by their /64 (`addressSubject`), since one subscriber
  * normally holds a whole /64 and could otherwise rotate past every per-address limit.

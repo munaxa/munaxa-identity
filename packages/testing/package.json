@@ -19,11 +19,11 @@
     "pg": "^8.13.1"
   },
   "devDependencies": {
-    "@munaxa/auth": "^2.4.1",
-    "@munaxa/conformance": "^2.4.1",
-    "@munaxa/crypto": "^2.4.1",
-    "@munaxa/interfaces": "^2.4.1",
-    "@munaxa/types": "^2.4.1",
+    "@munaxa/auth": "^2.5.0",
+    "@munaxa/conformance": "^2.5.0",
+    "@munaxa/crypto": "^2.5.0",
+    "@munaxa/interfaces": "^2.5.0",
+    "@munaxa/types": "^2.5.0",
     "@types/node": "^22.10.0",
     "@types/pg": "^8.11.10",
     "typescript": "^5.7.3",

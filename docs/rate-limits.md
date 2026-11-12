@@ -29,7 +29,9 @@ which is the client's own only because `TRUST_PROXY_HOPS` names the one proxy in
 Rules are evaluated in the order listed; the first refusal stops, and later rules are not charged.
 Every rule is a plain sliding window: refused attempts count, and the count is one stable counter
 per rule and subject. (Platform 2.4.1's adaptive rules restart their count after a refusal, so none
-is used here; see munaxa-platform#107 for the fix in Platform.) Page views (`GET` of the sign-in,
+is used here; munaxa-platform#107 fixed that in Platform 2.5.0, and Identity keeps its own rules on
+2.5.0 as well. On 2.5.0 the general `api-per-ip` and `introspect-per-ip` rules also count an IPv6
+client by its /64, as the credential rules already did.) Page views (`GET` of the sign-in,
 reset and MFA pages) are not counted by the credential rules. A request with no identifier, no
 challenge or no verifiable session is still counted by the address rule, and the route refuses it.
 

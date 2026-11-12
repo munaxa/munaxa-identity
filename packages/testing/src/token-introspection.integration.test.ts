@@ -13,6 +13,7 @@ import { APPLICATION_URL, OWNER_URL, createOrganisation } from './index.js';
 import { loadEnvironment, type IdentityEnvironment } from '../../config/src/index.js';
 import { AccountSessionsService } from '../../../apps/api/src/account/account-sessions.service.js';
 import { AuthService } from '../../../apps/api/src/auth/auth.service.js';
+import { resolvePrincipal } from '../../../apps/api/src/auth/principal.js';
 import {
   TokenIntrospectionController,
   introspectAccessToken,
@@ -398,6 +399,52 @@ describe('tokens that never stood', () => {
     for (const token of [undefined, '', 'not-a-jwt', 'a.b.c', forged, sessionless, expired]) {
       expect(await introspect(token)).toEqual({ kind: 'answered', answer: { active: false } });
     }
+  });
+
+  // Platform 2.5.0 (#100): `verifyAccessToken` refuses a signed token whose `exp` is missing or not
+  // a finite number (2.4.1 compared against NaN, so it never expired), a non-numeric `iat`, and
+  // reads a string `aud` as one value instead of matching it as a substring. These tokens carry
+  // Identity's own valid signature and a live session, so only those claim checks can refuse them.
+  it('a token with Identity’s own signature but no usable expiry, issue time or exact audience is inactive', async () => {
+    const someone = await person();
+    const signedIn = await signIn(someone.identifier);
+    const claims = security.tokens.verifyAccessToken(signedIn.access);
+    expect(await isActive(signedIn.access)).toBe(true);
+
+    const ownKey = new AsymmetricSigner('ES256', [
+      {
+        kid: 'identity-test-2026-11',
+        privateKey: signingKey.privateKey,
+        publicKey: signingKey.publicKey,
+      },
+    ]);
+    const encode = (value: unknown): string =>
+      Buffer.from(JSON.stringify(value)).toString('base64url');
+    const signedWithOwnKey = (payload: Record<string, unknown>): string => {
+      const header = encode({ alg: 'ES256', typ: 'JWT', kid: 'identity-test-2026-11' });
+      const body = encode(payload);
+      return `${header}.${body}.${ownKey.sign(`${header}.${body}`).value}`;
+    };
+    const withoutExpiry: Record<string, unknown> = { ...claims };
+    delete withoutExpiry.exp;
+
+    // The control: the same construction with the claims unchanged is a token Identity accepts,
+    // so each refusal below is the claim check, not the construction.
+    expect(await isActive(signedWithOwnKey({ ...claims }))).toBe(true);
+
+    for (const token of [
+      signedWithOwnKey(withoutExpiry),
+      signedWithOwnKey({ ...claims, exp: String(claims.exp) }),
+      signedWithOwnKey({ ...claims, exp: null }),
+      signedWithOwnKey({ ...claims, iat: 'yesterday' }),
+      signedWithOwnKey({ ...claims, aud: 'not-munaxa-work-at-all' }),
+      signedWithOwnKey({ ...claims, aud: 'munaxa-workshop' }),
+    ]) {
+      expect(await introspect(token)).toEqual({ kind: 'answered', answer: { active: false } });
+      expect((await resolvePrincipal(security, token)).ok).toBe(false);
+    }
+    // A string `aud` naming exactly the trusted audience is still valid (RFC 7519 §4.1.3).
+    expect(await isActive(signedWithOwnKey({ ...claims, aud: 'munaxa-work' }))).toBe(true);
   });
 
   it('a token naming a session of another organisation, or of another person, is inactive', async () => {
