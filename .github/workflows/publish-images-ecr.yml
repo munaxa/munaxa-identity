@@ -151,7 +151,7 @@ jobs:
           docker pull "$REF"
           user=$(docker run --rm --entrypoint sh "$REF" -c 'id -un')
           [ "$user" != "root" ] || { echo "::error::image runs as root"; exit 1; }
-          if docker history --no-trunc --format '{{.CreatedBy}}' "$REF" | grep -qE 'ghp_|github_pat_|_authToken=[A-Za-z0-9]'; then
+          if docker history --no-trunc --format '{{.CreatedBy}}' "$REF" | grep -qE 'ghp_|ghs_|github_pat_|_authToken=[A-Za-z0-9]'; then
             echo "::error::a credential appears in image history"; exit 1
           fi
           if docker run --rm --entrypoint sh "$REF" -c 'find / -name ".npmrc" 2>/dev/null | xargs grep -l "_authToken=[A-Za-z0-9]" 2>/dev/null' | grep -q .; then
