@@ -83,8 +83,10 @@ Terraform validations refuse any other:
   lockout, MFA challenge and replay marker is fleet-wide. Production refuses a non-loopback
   `REDIS_URL` that is not `rediss://` or has no password (`packages/config/src/redis-url.ts`).
 
-After a failover the client reconnects on `READONLY` and resends the refused write once (it did
-not run on the replica, so it is not counted twice); `apps/api/src/platform/cache.ts`.
+After a failover the client reconnects on `READONLY`: the refused command fails closed (that one
+request is refused, 503 on credential routes), and the next command reaches the new primary.
+Nothing is resent, so nothing lands after its caller was told it failed. Readiness asks `ROLE`, so a
+task connected to a replica reports not ready; `apps/api/src/platform/cache.ts`.
 
 ## Failure behaviour
 

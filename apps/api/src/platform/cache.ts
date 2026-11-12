@@ -60,9 +60,12 @@ export const isReadOnlyReplicaError = (error: Error): boolean =>
 /**
  * Options for the ioredis client, exported for the tests that prove them.
  *
- * - `reconnectOnError` returns 2 on `READONLY`: drop the connection, reconnect (the DNS name now
- *   resolves to the new primary) and resend the failed command. The command did not run on the
- *   replica, so resending it applies it once. Any other error is returned to the caller as before.
+ * - `reconnectOnError` returns 1 on `READONLY`: the refused command fails to its caller (closed, as
+ *   any store error), and the connection is dropped and reopened, so the next command reaches
+ *   whatever the DNS name now resolves to, the new primary. It never resends (2 would): a resent
+ *   command outlives the caller's timeout, and while the endpoint still names a replica ioredis
+ *   resends without limit and applies the write late, after the caller was told it failed. The
+ *   platform never retries a cache write, and neither does this. Any other error is unchanged.
  * - `rediss://` turns TLS on with certificate and host-name verification (Node's defaults, stated
  *   here so nothing can switch them off), TLS 1.2 or later. `tls.ca` exists for the integration
  *   tests' own CA; production passes nothing and Node's trust store verifies ElastiCache.
@@ -76,7 +79,7 @@ export const redisClientOptions = (
     lazyConnect: true,
     maxRetriesPerRequest: 3,
     commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
-    reconnectOnError: (error) => (isReadOnlyReplicaError(error) ? 2 : false),
+    reconnectOnError: (error) => (isReadOnlyReplicaError(error) ? 1 : false),
   };
   if (parsed.protocol === 'rediss:') {
     options.tls = {
@@ -112,9 +115,11 @@ export const openCache = async (
   return {
     cache: new RedisCache(client as unknown as RedisLike, { keyPrefix: 'identity:' }),
     kind: 'redis',
+    // A replica answers PING too, and refuses every write: reachable means connected to a primary.
     reachable: async () => {
       try {
-        return (await client.ping()) === 'PONG';
+        const role = (await client.call('ROLE')) as unknown;
+        return Array.isArray(role) && role[0] === 'master';
       } catch {
         return false;
       }

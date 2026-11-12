@@ -26,8 +26,22 @@ export const isLoopbackHost = (hostname: string): boolean => {
   return (
     octets.length === 4 &&
     octets[0] === '127' &&
-    octets.every((o) => /^\d{1,3}$/.test(o) && Number(o) <= 255)
+    // Canonical decimal only: 127.0.0.01, 0x7f.0.0.1 and 127.1 are not treated as loopback.
+    octets.every((o) => /^(0|[1-9]\d{0,2})$/.test(o) && Number(o) <= 255)
   );
+};
+
+/** The URL with its userinfo replaced, for anything that shows configuration. */
+export const redactRedisUrl = (value: string): string => {
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.username === '' && parsed.password === '') return parsed.toString();
+    parsed.username = '';
+    parsed.password = '';
+    return parsed.toString().replace('://', '://[redacted]@');
+  } catch {
+    return '[redacted: not a valid URL]';
+  }
 };
 
 export const redisUrlIssues = (

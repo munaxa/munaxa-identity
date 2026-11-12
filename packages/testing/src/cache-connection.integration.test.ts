@@ -214,7 +214,7 @@ describe.skipIf(!haveServer)('the cache connection after a failover', () => {
     expect(isReadOnlyReplicaError(new Error('Command timed out'))).toBe(false);
   });
 
-  it('reconnects on READONLY and applies the write once on the new primary', async () => {
+  it('reconnects on READONLY: the refused write fails closed, the next one lands on the new primary', async () => {
     const url = `redis://:${PASSWORD}@127.0.0.1:${String(endpoint.port)}`;
     const handle = await openCache(url);
     // A control client without reconnectOnError, opened the same way before the failover.
@@ -233,14 +233,20 @@ describe.skipIf(!haveServer)('the cache connection after a failover', () => {
 
       // The connection opened before the switch is still on the old primary, now a replica.
       await expect(control.incr(`identity:${key}`)).rejects.toThrow(/READONLY/);
+      // The control client never leaves it: every write keeps failing.
+      await expect(control.incr(`identity:${key}`)).rejects.toThrow(/READONLY/);
 
-      // Identity's client: the write that hit READONLY is resent after the reconnect, once.
+      // Identity's client: the write that hit READONLY fails to its caller (closed), is not resent,
+      // and the reconnect it triggered puts the next write on the new primary.
+      await expect(handle.cache.increment(key, 1, TTL)).rejects.toThrow(/READONLY/);
+      await waitFor(() => handle.reachable(), 'the handle to reach the new primary');
       expect(await handle.cache.increment(key, 1, TTL)).toBe(2);
-      expect(await handle.reachable()).toBe(true);
 
-      // And the state is on the new primary, where every other task now reads it.
+      // And the state is on the new primary, where every other task now reads it: 1 + 1, the
+      // refused increment never applied.
       const direct = admin(b);
       await direct.connect();
+      await new Promise((resolve) => setTimeout(resolve, 500));
       expect(await direct.get(`identity:${key}`)).toBe('2');
       expect(await direct.pttl(`identity:${key}`)).toBeGreaterThan(0);
       direct.disconnect();
@@ -248,6 +254,44 @@ describe.skipIf(!haveServer)('the cache connection after a failover', () => {
       control.disconnect();
       await handle.close();
       await failover(b, a);
+    }
+  });
+
+  it('pointed at a node that stays a replica: not ready, writes refused, nothing resent or applied late', async () => {
+    // The endpoint still names the replica (a wrong endpoint, or DNS not yet moved).
+    const stuck = await startEndpoint(b);
+    const handle = await openCache(`redis://:${PASSWORD}@127.0.0.1:${String(stuck.port)}`);
+    const replica = admin(b);
+    await replica.connect();
+    try {
+      // A replica answers PING; readiness asks ROLE, so the task is not ready.
+      expect(await handle.reachable()).toBe(false);
+
+      const key = `stuck-${randomBytes(4).toString('hex')}`;
+      const before = Number(
+        /total_connections_received:(\d+)/.exec(await replica.info('stats'))?.[1],
+      );
+      await expect(handle.cache.increment(key, 1, TTL)).rejects.toThrow();
+      // Give a resend loop time to show itself: none may run.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      const after = Number(
+        /total_connections_received:(\d+)/.exec(await replica.info('stats'))?.[1],
+      );
+      expect(after - before).toBeLessThanOrEqual(3);
+
+      // Promote the replica: the refused increment must not appear on it.
+      await replica.replicaof('NO', 'ONE');
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      expect(await replica.get(`identity:${key}`)).toBeNull();
+    } finally {
+      replica.disconnect();
+      await handle.close().catch(() => undefined);
+      const back = admin(b);
+      await back.connect();
+      await back.replicaof('127.0.0.1', a);
+      back.disconnect();
+      await waitFor(() => linkUp(b), 'b to replicate a again');
+      await stuck.close();
     }
   });
 

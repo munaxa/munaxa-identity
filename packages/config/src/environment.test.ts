@@ -3,7 +3,7 @@ import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import { loadEnvironment, describeEnvironment } from './environment.js';
-import { isLoopbackHost } from './redis-url.js';
+import { isLoopbackHost, redactRedisUrl } from './redis-url.js';
 
 /** A production cache URL of the approved shape: TLS, a generated password (never a real token). */
 const CACHE_PASSWORD = randomBytes(24).toString('base64url');
@@ -522,5 +522,26 @@ describe('REDIS_URL in production (shared cache over TLS, or the loopback sideca
     expect(isLoopbackHost('127.0.0.256')).toBe(false);
     expect(isLoopbackHost('localhost.example.com')).toBe(false);
     expect(isLoopbackHost('::ffff:127.0.0.1')).toBe(false);
+    // Only canonical decimal octets.
+    expect(isLoopbackHost('127.0.0.01')).toBe(false);
+    expect(isLoopbackHost('0127.0.0.1')).toBe(false);
+    expect(isLoopbackHost('127.0.0.0')).toBe(true);
+  });
+
+  it('refuses a blank REDIS_URL, which would give each task its own in-process store', () => {
+    for (const blank of ['', '   ', '\t']) {
+      expect(() => loadEnvironment({ ...production, REDIS_URL: blank })).toThrowError(
+        /REDIS_URL.*is required in production/s,
+      );
+    }
+  });
+
+  it('never shows the store password when the configuration is described', () => {
+    const described = describeEnvironment(loadEnvironment({ ...production, REDIS_URL: CACHE_URL }));
+    const shown = String(described.MUNAXA_REDIS_URL);
+    expect(shown).not.toContain(new URL(CACHE_URL).password);
+    expect(shown).toMatch(/^rediss:\/\/\[redacted\]@/);
+    expect(redactRedisUrl('not a url')).toBe('[redacted: not a valid URL]');
+    expect(redactRedisUrl('redis://localhost:6379')).toBe('redis://localhost:6379');
   });
 });
