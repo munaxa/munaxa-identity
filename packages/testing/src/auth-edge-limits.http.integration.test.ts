@@ -409,6 +409,40 @@ describe('sign-in: POST /api/auth/login', () => {
   });
 });
 
+describe('review round 1', () => {
+  it('scopes the identifier limit by organisation: a made-up organisation cannot hold a real sign-in', async () => {
+    const someone = await person();
+    for (let attempt = 0; attempt <= LIMITS.loginPerIdentifier; attempt += 1) {
+      await send('POST', '/api/auth/login', {
+        ip: freshIp(),
+        body: {
+          identifier: someone.identifier,
+          password: 'x',
+          organisation: `made-up-${String(attempt % 3)}`,
+        },
+      });
+    }
+    expect((await loginAs(freshIp(), someone.identifier, { password: PASSWORD })).status).toBe(200);
+  });
+
+  it('counts an IPv6 client by its /64: rotating the interface identifier does not escape', async () => {
+    const prefix = `2001:db8:${randomInt(1, 0xffff).toString(16)}:${randomInt(1, 0xffff).toString(16)}`;
+    for (let attempt = 0; attempt < LIMITS.loginPerIp; attempt += 1) {
+      expect((await loginAs(`${prefix}::${(attempt + 1).toString(16)}`)).status).toBe(401);
+    }
+    expect(edgeLimited(await loginAs(`${prefix}:1:2:3:4`))).toBe(true);
+  });
+
+  it('keeps a percent-encoded introspection spelling (a 404) under the browser address limit', async () => {
+    const encoded = await send('GET', '/api/auth/%69ntrospect', { ip: freshIp() });
+    expect(encoded.status).toBe(404);
+    expect(encoded.headers['ratelimit-limit']).toBe('300');
+    const routed = await send('GET', '/api/auth/INTROSPECT/', { ip: freshIp() });
+    expect(routed.status).toBe(200);
+    expect(routed.headers['ratelimit-limit']).toBe('12000');
+  });
+});
+
 describe('password reset: POST /api/auth/password/forgot and /reset', () => {
   it('shares one per-address limit across request and completion and their spellings', async () => {
     const ip = freshIp();
@@ -675,9 +709,14 @@ describe('route identity', () => {
   });
 
   it('never carries an identifier or a credential in a counter key', () => {
-    expect(edge.identifierSubject(' Someone@Example.com ')).toBe(
-      edge.identifierSubject('someone@example.com'),
+    expect(edge.identifierSubject(' Someone@Example.com ', 'Acme ')).toBe(
+      edge.identifierSubject('someone@example.com', 'acme'),
     );
+    expect(edge.identifierSubject('someone@example.com', 'acme')).not.toBe(
+      edge.identifierSubject('someone@example.com', 'globex'),
+    );
+    expect(edge.addressSubject('2001:DB8:1:2::9')).toBe('2001:db8:1:2::/64');
+    expect(edge.addressSubject('::ffff:203.0.113.7')).toBe('203.0.113.7');
     expect(edge.identifierSubject('someone@example.com')).not.toContain('someone');
     expect(edge.identifierSubject('')).toBeUndefined();
     expect(edge.identifierSubject(42)).toBeUndefined();

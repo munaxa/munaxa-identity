@@ -20,8 +20,12 @@ import { ROOT_TENANT_ID, type Clock } from '@munaxa/types';
  * limiter (2.4.1) restarts an adaptive rule's count after each refusal and admits on a store
  * failure. These rules are non-adaptive (so the count is one stable counter per rule and subject,
  * refusals included) and each is evaluated by a limiter of its own, so a store failure is seen per
- * rule and refused (`unavailable`, 503) rather than admitted. When a Platform release with the
- * stable counter is adopted, nothing here has to change for it to stay correct.
+ * rule and refused (`unavailable`, 503) rather than admitted. Adopting a later Platform release
+ * needs its own review: munaxa-platform#107 changes how malformed counter values and IPv6 addresses
+ * are treated, and this module must be re-tested against it (it is pinned to 2.4.1 behaviour).
+ *
+ * **Addresses.** IPv6 clients are counted by their /64 (`addressSubject`), since one subscriber
+ * normally holds a whole /64 and could otherwise rotate past every per-address limit.
  *
  * **Shared addresses.** A school or office signs in from one public address, so the per-address
  * limits are sized for a population, not for a person; what stops guessing at one account is the
@@ -125,12 +129,48 @@ export const authEdgeRules = (policy: AuthEdgePolicy): RateLimitRule[] => [
   },
 ];
 
-/** The digest an identifier is counted under: never the address itself, in a key or a log. */
-export const identifierSubject = (identifier: unknown): string | undefined => {
+/**
+ * The digest a sign-in identifier is counted under: never the address itself, in a key or a log.
+ *
+ * Scoped by the organisation typed with it, so somebody who knows an address cannot hold that
+ * person's sign-in at 429 in every organisation by posting it with a made-up one. Both are trimmed
+ * and lowercased the way the directory and the organisation lookup read them.
+ */
+export const identifierSubject = (
+  identifier: unknown,
+  organisation?: unknown,
+): string | undefined => {
   if (typeof identifier !== 'string') return undefined;
   const normalised = identifier.trim().toLowerCase();
   if (normalised === '') return undefined;
-  return `id:${createHash('sha256').update(normalised).digest('hex').slice(0, 32)}`;
+  const scope = typeof organisation === 'string' ? organisation.trim().toLowerCase() : '';
+  return `id:${createHash('sha256').update(`${scope}\u0000${normalised}`).digest('hex').slice(0, 32)}`;
+};
+
+/**
+ * The subject an address is counted under: IPv4 as it is, IPv6 by its /64, an IPv4-mapped IPv6
+ * address as the IPv4 address it maps.
+ */
+export const addressSubject = (address: string): string => {
+  const trimmed = address.trim().toLowerCase();
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(trimmed);
+  if (mapped) return mapped[1]!;
+  if (!trimmed.includes(':')) return trimmed;
+  const [head = '', tail] = trimmed.split('%')[0]!.split('::');
+  const left = head === '' ? [] : head.split(':');
+  const right = tail === undefined || tail === '' ? [] : tail.split(':');
+  const groups =
+    tail === undefined
+      ? left
+      : [
+          ...left,
+          ...Array.from({ length: Math.max(0, 8 - left.length - right.length) }, () => '0'),
+          ...right,
+        ];
+  return `${groups
+    .slice(0, 4)
+    .map((group) => (group === '' ? '0' : group.replace(/^0+(?=.)/, '')))
+    .join(':')}::/64`;
 };
 
 /** The digest a challenge or session credential is counted under. */
@@ -187,7 +227,7 @@ export class AuthEdgeLimiter {
       method: request.method,
       path: request.route,
       tenantId: ROOT_TENANT_ID,
-      ...(request.ipAddress === undefined ? {} : { ipAddress: request.ipAddress }),
+      ...(request.ipAddress === undefined ? {} : { ipAddress: addressSubject(request.ipAddress) }),
       ...(request.identifier === undefined ? {} : { userId: request.identifier }),
       ...(request.credential === undefined ? {} : { sessionId: request.credential }),
     };

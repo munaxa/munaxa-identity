@@ -13,6 +13,11 @@ import { randomUUID } from 'node:crypto';
 import { ENVIRONMENT, SECURITY_STACK } from '../tokens.js';
 import { MFA_CHALLENGE_COOKIE, SESSION_COOKIE } from '../auth/cookies.js';
 import {
+  INTROSPECTION_PATH,
+  isIntrospection,
+  normalisedPath,
+} from '../auth/token-introspection.js';
+import {
   canonicalRoute,
   credentialSubject,
   identifierSubject,
@@ -85,10 +90,11 @@ export class EdgeMiddleware implements NestMiddleware {
     response.setHeader('x-correlation-id', correlationId);
     (request as Request & { correlationId?: string }).correlationId = correlationId;
 
-    const route = canonicalRoute(request.originalUrl || request.url || '/');
+    const target = request.originalUrl || request.url || '/';
+    const route = canonicalRoute(target);
     const platformRequest: PlatformRequest = {
       method: request.method,
-      path: route,
+      path: generalPathOf(target, route),
       headers: request.headers as Record<string, string | undefined>,
       cookies: (request as Request & { cookies?: Record<string, string> }).cookies ?? {},
       body: request.body as unknown,
@@ -148,7 +154,7 @@ export class EdgeMiddleware implements NestMiddleware {
     const login = isLogin(method, route);
     const mfa = isMfa(method, route);
     const body = request.body as Record<string, unknown> | undefined;
-    const identifier = login ? identifierSubject(body?.identifier) : undefined;
+    const identifier = login ? identifierSubject(body?.identifier, body?.organisation) : undefined;
     const credential = mfa ? this.credentialOf(request, route) : undefined;
     return this.security.authEdgeLimiter.check({
       method,
@@ -197,6 +203,24 @@ export class EdgeMiddleware implements NestMiddleware {
       });
   }
 }
+
+/**
+ * The path the general rules see.
+ *
+ * The canonical route, except that only spellings Express itself routes to introspection (case,
+ * repeated and trailing slashes; no percent-decoding) are carved out to its high address limit. A
+ * percent-encoded spelling such as `/api/auth/%69ntrospect` is a 404 and stays under the browser
+ * limit rather than buying 404 traffic at the product-egress rate.
+ */
+const generalPathOf = (target: string, route: string): string => {
+  if (route !== INTROSPECTION_PATH) return route;
+  const withoutHost = target.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '');
+  const end = withoutHost.search(/[?#]/);
+  const routed = isIntrospection(
+    normalisedPath(end === -1 ? withoutHost : withoutHost.slice(0, end)),
+  );
+  return routed ? route : `${route}#encoded`;
+};
 
 const headerOf = (request: Request, name: string): string | undefined => {
   const value = request.headers[name];

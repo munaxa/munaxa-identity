@@ -11,6 +11,7 @@ import type {
   ResetTokenStorePort,
   UserDirectoryPort,
 } from '@munaxa/interfaces';
+import { addressSubject } from '../security/auth-edge-limits.js';
 import { RateLimiter, type RateLimitDecision, type RateLimitTarget } from '@munaxa/security';
 import type { CachePort } from '@munaxa/interfaces';
 import {
@@ -226,7 +227,7 @@ export class PasswordRecovery {
       path: '/auth/password/forgot',
       tenantId: ROOT_TENANT_ID,
       userId: sha256Hex(`${organisation.toLowerCase()}\u0000${identifier.toLowerCase()}`),
-      ...(input.ipAddress === undefined ? {} : { ipAddress: input.ipAddress }),
+      ...(input.ipAddress === undefined ? {} : { ipAddress: addressSubject(input.ipAddress) }),
     });
     if (decision.degraded === true) {
       // The shared counter store is unreachable. Platform's limiter allows on failure; recovery
