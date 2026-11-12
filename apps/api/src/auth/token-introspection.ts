@@ -94,8 +94,17 @@ export type IntrospectionOutcome =
   | { readonly kind: 'limited'; readonly retryAfterSeconds: number }
   | { readonly kind: 'unavailable' };
 
-/** True for the introspection route, however the global prefix spells the path. */
-export const isIntrospection = (path: string): boolean => path.endsWith('/auth/introspect');
+export const INTROSPECTION_PATH = '/api/auth/introspect';
+
+/** A path as Express routes it: case-insensitive, repeated and trailing slashes ignored. */
+export const normalisedPath = (path: string): string =>
+  path
+    .toLowerCase()
+    .replace(/\/{2,}/g, '/')
+    .replace(/(.)\/$/, '$1');
+
+/** True for exactly the introspection route, given a path from `normalisedPath`. */
+export const isIntrospection = (path: string): boolean => path === INTROSPECTION_PATH;
 
 /**
  * Per-account limit on introspection answers, applied once the token resolves to an account.
@@ -141,7 +150,7 @@ export const introspectAccessToken = async (
   if (limiter !== undefined) {
     const decision = await limiter.check({
       method: 'GET',
-      path: '/api/auth/introspect',
+      path: INTROSPECTION_PATH,
       tenantId,
       userId,
     });

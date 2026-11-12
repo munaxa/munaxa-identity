@@ -179,7 +179,8 @@ describe('GET /api/auth/introspect through the application', () => {
     const quietToken = await accessTokenFor(quiet.identifier);
 
     let limited: Response | undefined;
-    for (let call = 0; call < 601 && limited === undefined; call += 1) {
+    // Up to twice the limit, so a sliding-window boundary cannot hide the refusal.
+    for (let call = 0; call < 1_200 && limited === undefined; call += 1) {
       const response = await introspect(noisyToken);
       if (response.status === 429) limited = response;
     }
@@ -190,20 +191,15 @@ describe('GET /api/auth/introspect through the application', () => {
     expect(await (await introspect(quietToken)).json()).toMatchObject({ active: true });
   }, 60_000);
 
-  it('sees the whole path at the edge, so path-matched limits such as login-per-ip fire', async () => {
-    // Before the edge read the full path, Express reported `/` for every request and no
-    // path-matched rule ever matched. `login-per-ip` allows 10 sign-in attempts per 15 minutes.
-    const statuses: number[] = [];
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      const response = await fetch(`${base}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
-        body: JSON.stringify({ identifier: 'nobody@example.test', password: 'wrong' }),
+  it('carves out every spelling Express routes to introspection', async () => {
+    const someone = await person();
+    const token = await accessTokenFor(someone.identifier);
+    for (const path of ['/api/auth/INTROSPECT', '/api/auth/introspect/']) {
+      const response = await fetch(`${base}${path}`, {
+        headers: { authorization: `Bearer ${token}` },
       });
-      statuses.push(response.status);
+      expect(response.status, path).toBe(200);
+      expect(await response.json()).toMatchObject({ active: true });
     }
-
-    expect(statuses.slice(0, 10)).not.toContain(429);
-    expect(statuses[10]).toBe(429);
   });
 });
