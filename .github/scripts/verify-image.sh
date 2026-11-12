@@ -9,11 +9,11 @@
 #
 #   1. linux/amd64, the platform ECS Fargate runs (X86_64 in munaxa-platform infra/aws).
 #   2. Not root, by name and by uid.
-#   3. zlib at or above 1.4-r0, the Alpine release that fixes CVE-2026-4738, and the loaded library
-#      is that version (libz.so.1 -> libz.so.1.4*), not a stale copy beside the package record.
+#   3. zlib at or above 1.4-r0, the Alpine release that fixes CVE-2026-4738; the libz the loader
+#      maps is that package's libz.so.1.4*, and no libz file exists that the package does not own.
 #   4. Exactly the operating-system packages of the pinned base image: the zlib fix may change a
 #      version, never add or remove a package.
-#   5. No registry credential in the image history or in any .npmrc inside the image.
+#   5. No registry credential in the image history or in any .npmrc, and no build-proxy CA.
 #   6. runtime only: no development toolchain in node_modules.
 set -euo pipefail
 
@@ -36,10 +36,20 @@ uid="$(in_image 'id -u')"
 
 zlib="$(in_image "apk info -v 2>/dev/null | sed -n 's/^zlib-\([0-9][^ ]*\)\$/\1/p'")"
 [ -n "$zlib" ] || fail "zlib is not installed as a package (cannot verify CVE-2026-4738)"
-cmp="$(in_image "apk version -t '$zlib' '$ZLIB_FIXED'")"
-[ "$cmp" != "<" ] || fail "zlib $zlib is older than $ZLIB_FIXED (CVE-2026-4738)"
-lib="$(in_image 'readlink /usr/lib/libz.so.1')"
-case "$lib" in libz.so.1.4*) ;; *) fail "libz.so.1 resolves to $lib, not zlib 1.4";; esac
+cmp="$(in_image "apk version -t '$zlib' '$ZLIB_FIXED'" || true)"
+case "$cmp" in
+  '='|'>') ;;
+  '<') fail "zlib $zlib is older than $ZLIB_FIXED (CVE-2026-4738)" ;;
+  *) fail "cannot compare zlib '$zlib' with $ZLIB_FIXED" ;;
+esac
+# The library the dynamic loader actually maps (musl searches /lib before /usr/lib), resolved to
+# its file, must belong to that zlib package; and no other libz may exist outside the package.
+lib="$(in_image "ldd /sbin/apk | sed -n 's/^[[:space:]]*libz\.so\.1 => \([^ ]*\) .*/\1/p'")"
+[ -n "$lib" ] || fail "cannot find the libz the loader maps"
+lib="$(in_image "readlink -f '$lib'")"
+case "$lib" in */libz.so.1.4*) ;; *) fail "the loader maps $lib, not zlib 1.4";; esac
+stray="$(in_image "find / -xdev -name 'libz.so*' 2>/dev/null | while read -r f; do apk info -W \"\$f\" 2>/dev/null | grep -q ' is owned by zlib-$zlib\$' || echo \"\$f\"; done")"
+[ -z "$stray" ] || fail "libz files not owned by zlib-$zlib: $(echo "$stray" | tr '\n' ' ')"
 
 # The base the Dockerfile pins; every FROM must be either it or an earlier stage.
 base="$(sed -n 's/^FROM \(node:[^ ]*@sha256:[0-9a-f]\{64\}\) AS base$/\1/p' "$DOCKERFILE")"
@@ -54,6 +64,12 @@ if docker history --no-trunc --format '{{.CreatedBy}}' "$REF" | grep -qE 'ghp_|g
 fi
 if in_image 'find / -name ".npmrc" 2>/dev/null | xargs grep -l "_authToken=[A-Za-z0-9]" 2>/dev/null' | grep -q .; then
   fail "an .npmrc carrying a token is present in the image"
+fi
+
+# The build stage can append a proxy CA for local builds (Dockerfile); a published image must not
+# carry it, and migrate is cut from that stage.
+if in_image 'test -e /etc/ssl/certs/build-proxy.pem'; then
+  fail "the build-proxy CA is present in the image"
 fi
 
 if [ "$TARGET" = runtime ]; then

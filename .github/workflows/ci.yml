@@ -192,18 +192,22 @@ jobs:
         with:
           persist-credentials: false
 
-      # A tag is a promise someone else can change. Every FROM names a digest or an earlier stage.
+      # A tag is a promise someone else can change. Every image the Dockerfile names (FROM, COPY
+      # --from, RUN --mount from=) is a digest or an earlier stage. Instructions are case-insensitive.
       - name: Every base image is pinned by digest
         run: |
           set -euo pipefail
-          stages=""
-          while read -r _ image _ name; do
-            case "$image" in
-              *@sha256:????????????????????????????????????????????????????????????????) ;;
-              *) printf '%s\n' $stages | grep -qx "$image" || { echo "::error::FROM $image is not pinned by digest"; exit 1; } ;;
-            esac
-            stages="$stages $name"
-          done < <(grep -E '^FROM ' apps/api/Dockerfile)
+          file=apps/api/Dockerfile
+          # Stage names, then every image reference: the FROM image and any --from= (COPY or RUN --mount).
+          stages="$(grep -iE '^[[:space:]]*FROM[[:space:]]' "$file" | sed -nE 's/.*[[:space:]][Aa][Ss][[:space:]]+([^[:space:]]+)[[:space:]]*$/\1/p')"
+          refs="$( { grep -iE '^[[:space:]]*FROM[[:space:]]' "$file" | awk '{for (i = 2; i <= NF; i++) if ($i !~ /^--/) { print $i; break }}'
+                     grep -oiE -- '(--|,)from=[^[:space:],]+' "$file" | sed -E 's/^(--|,)[Ff][Rr][Oo][Mm]=//'; } )"
+          [ -n "$refs" ] || { echo "::error::no FROM found in $file"; exit 1; }
+          for ref in $refs; do
+            if printf '%s\n' "$stages" | grep -qx -- "$ref" || printf '%s' "$ref" | grep -qE '^[0-9]+$'; then continue; fi
+            printf '%s' "$ref" | grep -qE '@sha256:[0-9a-f]{64}$' || { echo "::error::$ref is not pinned by digest"; exit 1; }
+          done
+          echo "every image reference in $file is a digest or an earlier stage"
 
       - name: Build runtime and migrate
         env:
