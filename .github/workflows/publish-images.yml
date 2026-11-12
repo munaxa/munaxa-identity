@@ -11,8 +11,9 @@
 name: Publish image
 
 # Not on `image/**` tags any more: those are the ECR release tags (publish-images-ecr.yml), which
-# run behind the image-release environment. This GHCR job has no environment and holds
-# PLATFORM_PACKAGES_TOKEN, so it runs only when dispatched by hand, until Render is retired.
+# run behind the image-release environment. This GHCR job has no environment and holds a
+# packages: write token, so it runs only when dispatched by hand, until Render is retired. It reads
+# @munaxa/* with the same per-run GITHUB_TOKEN; no long-lived package token is used.
 on:
   workflow_dispatch:
     inputs:
@@ -27,15 +28,18 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   publish:
+    permissions:
+      contents: read
+      packages: write # push to GHCR; also reads @munaxa/* during the build
     name: munaxa-identity-api
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           # The commit to build, deliberately not tied to where this workflow file lives: `.github/`
           # and `deploy/` are both outside the runtime image, so a commit that only touches them
           # produces a byte-identical image to the commit it sits on top of.
@@ -54,7 +58,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          # The per-run token, scoped by `packages: write` above. Nothing longer-lived is needed to
+          # The per-run token, scoped by this job's `packages: write`. Nothing longer-lived is needed to
           # push, and nothing longer-lived should be used.
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -73,7 +77,7 @@ jobs:
           # Mounted at /run/secrets/npm_token for the layers that need it, and absent from every
           # layer's filesystem and from image history.
           secrets: |
-            npm_token=${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+            npm_token=${{ secrets.GITHUB_TOKEN }}
           # A single-platform manifest, so the digest names the image rather than an index over it.
           provenance: false
           sbom: false

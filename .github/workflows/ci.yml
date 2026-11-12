@@ -21,9 +21,16 @@ env:
   # Used only to create those roles and hand the schema to the migration role.
   TEST_SUPERUSER_URL: postgresql://identity:identity@localhost:5432/identity_test
 
+# Least privilege by default: every job gets a read-only token unless it asks for more below.
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read # @munaxa/* from GitHub Packages, with this run's own token
 
     services:
       postgres:
@@ -43,6 +50,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
@@ -59,7 +68,7 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Format
         run: pnpm format:check
@@ -177,4 +186,4 @@ jobs:
       - name: Audit dependencies
         run: pnpm audit --audit-level high
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

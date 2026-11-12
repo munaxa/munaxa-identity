@@ -140,7 +140,7 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           # The registry credential for @munaxa/* as a BuildKit secret, never a build argument.
           secrets: |
-            npm_token=${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+            npm_token=${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify the image runs as non-root and carries no credential
         env:
