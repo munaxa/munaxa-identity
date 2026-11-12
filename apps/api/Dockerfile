@@ -7,7 +7,29 @@
 # recorded in the image history, so a token passed that way is readable by anybody who can pull the
 # image — which for a private registry is a wider set than the people who were given the token.
 
-FROM node:22-alpine AS build
+# One base for every stage, so the runtime image and the migrate image (cut from `build`) carry the
+# same operating system, and pinned by digest so a rebuild of the same commit starts from the same
+# bytes. The digest is node:22-alpine (Node 22.23.5, Alpine 3.24.4) as published on 11 Nov 2026,
+# the image the 5a5994f release resolved the floating tag to.
+#
+# zlib is raised to 1.4-r0 on top of it because that image still ships zlib 1.3.2-r1, which carries
+# CVE-2026-4738 (CRITICAL in the ECR scan of the 5a5994f images). Alpine's aports secfixes list the
+# fix in 1.4-r0 (main/zlib/APKBUILD, 3.24-stable), and upstream zlib 1.4's ChangeLog names it. No
+# official node:22-alpine digest carried the fix when this was written; when one does, move the pin
+# to it and drop the upgrade. The version is exact, not `>=`, so the image is reproducible: if
+# Alpine replaces 1.4-r0 the build fails here, loudly, instead of quietly shipping something else.
+# apk verifies the package signature against the keys already in the pinned image; nothing else is
+# added or upgraded. .github/scripts/verify-image.sh checks the result in CI and before publishing.
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS base
+# The split is the point: `apk list -I zlib` prints `zlib-<version> <arch> ...` and $1 is the first word.
+# hadolint ignore=SC2046
+RUN apk add --no-cache 'zlib=1.4-r0' && \
+    set -- $(apk list -I zlib 2>/dev/null) && installed="${1#zlib-}" && \
+    if [ "$installed" != "1.4-r0" ]; then \
+      echo "zlib is '$installed', expected 1.4-r0 (CVE-2026-4738)" >&2; exit 1; \
+    fi
+
+FROM base AS build
 WORKDIR /app
 
 # An optional trust anchor for build environments whose egress proxy re-terminates TLS — most
@@ -108,7 +130,7 @@ RUN --mount=type=secret,id=npm_token --mount=type=secret,id=ca_bundle \
       rm -rf /tmp/prisma-client; \
       rm -f /root/.npmrc'
 
-FROM node:22-alpine AS runtime
+FROM base AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 

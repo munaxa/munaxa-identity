@@ -178,3 +178,45 @@ jobs:
         run: pnpm audit --audit-level high
         env:
           NODE_AUTH_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+
+  # Both images, built the way publish-images-ecr.yml builds them, and checked the way it checks
+  # them, so a Dockerfile change is proven on the pull request rather than at release time. Nothing
+  # is pushed. The package credential reaches the build only as a BuildKit secret, as in the release.
+  image:
+    name: Images (runtime and migrate)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # A tag is a promise someone else can change. Every FROM names a digest or an earlier stage.
+      - name: Every base image is pinned by digest
+        run: |
+          set -euo pipefail
+          stages=""
+          while read -r _ image _ name; do
+            case "$image" in
+              *@sha256:????????????????????????????????????????????????????????????????) ;;
+              *) printf '%s\n' $stages | grep -qx "$image" || { echo "::error::FROM $image is not pinned by digest"; exit 1; } ;;
+            esac
+            stages="$stages $name"
+          done < <(grep -E '^FROM ' apps/api/Dockerfile)
+
+      - name: Build runtime and migrate
+        env:
+          NPM_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+        run: |
+          set -euo pipefail
+          for target in runtime migrate; do
+            docker build --platform linux/amd64 --file apps/api/Dockerfile --target "$target" \
+              --secret id=npm_token,env=NPM_TOKEN --tag "identity-$target:ci" .
+          done
+
+      - name: Verify both images (zlib CVE-2026-4738 fix, non-root, no credential)
+        run: |
+          set -euo pipefail
+          .github/scripts/verify-image.sh identity-runtime:ci runtime
+          .github/scripts/verify-image.sh identity-migrate:ci migrate
