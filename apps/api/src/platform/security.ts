@@ -9,7 +9,7 @@ import {
 import { CacheLock } from '@munaxa/cache';
 import { defaultPasswordHasher } from '@munaxa/crypto';
 import { PermissionResolver } from '@munaxa/rbac';
-import { RateLimiter, BASELINE_RATE_LIMIT_RULES } from '@munaxa/security';
+import { RateLimiter, BASELINE_RATE_LIMIT_RULES, type RateLimitRule } from '@munaxa/security';
 import { SessionManager } from '@munaxa/session';
 import { toCorrelationId, type EpochMillis } from '@munaxa/types';
 import type { IdentityEnvironment } from '@identity/config';
@@ -36,6 +36,7 @@ import type { PrismaService } from '../persistence/prisma.service.js';
 import { emailTransportFor } from '../delivery/email.js';
 import { PasswordChange, createChangeLimiter } from '../password/password-change.js';
 import { PasswordRecovery, createResetLimiter } from '../password/password-recovery.js';
+import { createIntrospectionLimiter, isIntrospection } from '../auth/token-introspection.js';
 import { openCache, type CacheHandle } from './cache.js';
 import { RoleAdministration } from './role-administration.js';
 import { loadSigningKey, type SigningKey } from './signing.js';
@@ -73,6 +74,8 @@ export interface SecurityStack {
   readonly roles: RoleAdministration;
   readonly audit: AuditService;
   readonly rateLimiter: RateLimiter;
+  /** The per-account limit on `GET /api/auth/introspect`; see `INTROSPECTION_RULES`. */
+  readonly introspectionLimiter: RateLimiter;
   readonly tenants: TenantDirectory;
   readonly signing: SigningKey;
   readonly cacheKind: 'redis' | 'memory';
@@ -351,7 +354,8 @@ export const buildSecurityStack = async (
     resolver,
     roles: new RoleAdministration(roleRepository, roleAssignments, resolver),
     audit,
-    rateLimiter: new RateLimiter({ cache, rules: [...BASELINE_RATE_LIMIT_RULES] }),
+    rateLimiter: new RateLimiter({ cache, rules: edgeRules() }),
+    introspectionLimiter: createIntrospectionLimiter(cache),
     tenants: new TenantDirectory(prisma),
     signing,
     cacheKind: handle.kind,
@@ -379,3 +383,27 @@ export const buildSecurityStack = async (
     },
   };
 };
+
+/**
+ * Platform's baseline edge rules, with introspection given its own address limit.
+ *
+ * `api-per-ip` (300 a minute) is right for a browser and wrong for a product backend: every Work
+ * task behind one NAT address shares the key, so about 25 live users would exhaust it and every
+ * Work request would then be refused. Introspection is carved out of it and gets `introspect-per-ip`
+ * instead, sized for a product's whole egress; one account is contained by `INTROSPECTION_RULES`.
+ */
+export const edgeRules = (): RateLimitRule[] =>
+  BASELINE_RATE_LIMIT_RULES.flatMap((rule): RateLimitRule[] => {
+    if (rule.id !== 'api-per-ip') return [rule];
+    const { match } = rule;
+    return [
+      { ...rule, match: (target) => !isIntrospection(target.path) && (match?.(target) ?? true) },
+      {
+        id: 'introspect-per-ip',
+        dimension: 'ip',
+        limit: 12_000,
+        window: 60 * 1_000,
+        match: (target) => isIntrospection(target.path),
+      },
+    ];
+  });

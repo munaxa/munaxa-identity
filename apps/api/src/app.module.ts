@@ -12,6 +12,7 @@ import { AccountSessionsController } from './account/account-sessions.controller
 import { AccountSessionsService } from './account/account-sessions.service.js';
 import { AuthController } from './auth/auth.controller.js';
 import { AuthService } from './auth/auth.service.js';
+import { TokenIntrospectionController } from './auth/token-introspection.js';
 import { MfaController } from './mfa/mfa.controller.js';
 import { MfaFlowService } from './mfa/mfa-flow.service.js';
 import { HealthController } from './health/health.controller.js';
@@ -34,6 +35,7 @@ import { ENVIRONMENT, LOGGER, SECURITY_STACK } from './tokens.js';
 @Module({
   controllers: [
     AuthController,
+    TokenIntrospectionController,
     AccountSessionsController,
     MfaController,
     HealthController,

@@ -14,13 +14,13 @@ later — the resolver cache expiring — and Work honours an already-issued tok
 
 ## What takes effect immediately, and what does not
 
-| Action                                | Identity                                            | Munaxa Work                   |
-| ------------------------------------- | --------------------------------------------------- | ----------------------------- |
-| `RoleAdministration.revoke`           | at once — the cache is invalidated in the same call | next token                    |
-| A role change written directly in SQL | within 60 s, when the cache expires                 | next token                    |
-| Session revoked                       | at once; refresh refuses                            | when the access token expires |
-| Account disabled                      | at once; refresh refuses                            | when the access token expires |
-| Refresh token replayed                | at once; the whole lineage is revoked               | when the access token expires |
+| Action                                | Identity                                            | Munaxa Work                |
+| ------------------------------------- | --------------------------------------------------- | -------------------------- |
+| `RoleAdministration.revoke`           | at once — the cache is invalidated in the same call | next token                 |
+| A role change written directly in SQL | within 60 s, when the cache expires                 | next token                 |
+| Session revoked                       | at once; refresh refuses                            | within 5 s (introspection) |
+| Account disabled                      | at once; refresh refuses                            | within 5 s (introspection) |
+| Refresh token replayed                | at once; the whole lineage is revoked               | within 5 s (introspection) |
 
 ## Sessions and lineages are revoked together
 
@@ -69,23 +69,26 @@ The access token is a 15-minute ES256 JWT. After any revocation above:
 - **Every Identity route refuses it at once.** `resolvePrincipal` (`apps/api/src/auth/principal.ts`)
   verifies the token, loads the account, requires the current token version, and validates the
   session row on every request.
-- **Munaxa Work keeps accepting it until it expires** — at most `ACCESS_TOKEN_TTL` plus clock skew,
-  ≈ 15½ minutes — because Work verifies tokens without calling Identity. No refresh can extend it.
-  This is the window the section below describes, unchanged by session management.
+- **Munaxa Work refuses it within its revocation window** (Work ADR-0080). After verifying the
+  signature, Work asks `GET /api/auth/introspect` with the token as a Bearer credential. The route
+  decides with the same `resolvePrincipal` and answers `{ active: true, sub, tid, sid, exp }` or
+  `{ active: false }` (`no-store`), or 503 `AUTH_UNAVAILABLE` when a dependency fails, which Work
+  treats as a refusal. Work reuses a positive answer for at most `PLATFORM_AUTH_REVOCATION_CACHE_MS`
+  (default 5 s) from when it asked, so a revocation committed at R stops a token at every Work
+  instance for requests received after R + 5 s. The route is carved out of the edge's browser
+  limit `api-per-ip` (300 per minute), which every Work task behind one NAT address would share,
+  and has its own `introspect-per-ip` (12,000 per minute) plus `introspect-per-user` (600 answers
+  per minute per account, then 429 `RATE_LIMITED`), so one account cannot exhaust the limit for
+  everyone else. See Work ADR-0080.
 
 ## Cutting someone off now
 
-Revoke the session **and** the refresh lineage. No further token is issued, so the exposure is
-bounded by the current access token's remaining life — at most 15½ minutes, usually much less.
-Nothing shortens a token already in a browser: that is the cost of a stateless verifier, and it is
-the trade the architecture makes deliberately.
+Revoke the session **and** the refresh lineage. No further token is issued; Identity refuses the
+access token at once, and Munaxa Work within its revocation window (5 s by default). A product that
+verifies tokens without introspecting still honours one until it expires, at most 15½ minutes.
 
-If that window is ever judged unacceptable, the smallest additional contract is a
-`permission_version` claim plus one briefly-cached introspection endpoint Work consults. Munaxa Docs
-implements exactly that (`apps/api/src/core/auth/permission-version.ts`), and its comment records
-what the unchecked version claim cost them: three documented revocation guarantees that were false.
-It is not built here, because building it means a per-request call from Work to Identity and that is
-a decision with its own cost.
+A role change is different: it is not a session revocation, so introspection still answers active.
+It reaches Work with the next token (at most one access-token lifetime), as the first table says.
 
 ## Never
 

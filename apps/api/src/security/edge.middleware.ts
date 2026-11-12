@@ -11,6 +11,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 
 import { ENVIRONMENT, SECURITY_STACK } from '../tokens.js';
+import { isIntrospection, normalisedPath } from '../auth/token-introspection.js';
 import type { SecurityStack } from '../platform/security.js';
 import type { IdentityEnvironment } from '@identity/config';
 
@@ -78,7 +79,7 @@ export class EdgeMiddleware implements NestMiddleware {
 
     const platformRequest: PlatformRequest = {
       method: request.method,
-      path: request.path,
+      path: edgePathOf(request),
       headers: request.headers as Record<string, string | undefined>,
       cookies: (request as Request & { cookies?: Record<string, string> }).cookies ?? {},
       body: request.body as unknown,
@@ -98,6 +99,24 @@ export class EdgeMiddleware implements NestMiddleware {
     next();
   }
 }
+
+/**
+ * The path the edge rules see.
+ *
+ * Express reports `request.path` relative to Nest's every-route mount, which is `/` for every
+ * request, so Platform's path-matched rules (login, password reset) never match at this edge. That
+ * is a known, separate defect: turning those rules on changes who gets locked out behind a shared
+ * address, and Platform's adaptive window currently restarts its count after each refusal, so it is
+ * left for its own decision rather than changed here. The one path this edge does resolve is the
+ * introspection route, normalised the way Express routes it (case, repeated and trailing slashes),
+ * so that it is carved out of the browser limit and given its own (`edgeRules`).
+ */
+const edgePathOf = (request: Request): string => {
+  const raw = request.originalUrl || request.url || '/';
+  const end = raw.search(/[?#]/);
+  const normalised = normalisedPath(end === -1 ? raw : raw.slice(0, end));
+  return isIntrospection(normalised) ? normalised : request.path;
+};
 
 const headerOf = (request: Request, name: string): string | undefined => {
   const value = request.headers[name];
