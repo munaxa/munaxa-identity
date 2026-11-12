@@ -774,23 +774,23 @@ packages:
     resolution:
       {
         integrity: sha512-LfjMZyGawUICbqrwVhGOJJoehghQ7MLkSKArUEl0BiO+F5Ln2w+/ceii5711P4oKLp2z1q+NlN41yKaOFsBazw==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-audit-2.5.0.tgz,
+        tarball: https://npm.pkg.github.com/download/@munaxa/audit/2.5.0/5f0dd25946fd9b7857cfa56e3d1ee6a0599967af,
       }
     engines: { node: '>=22.12.0' }
 
   '@munaxa/auth@2.5.0':
     resolution:
       {
-        integrity: sha512-KoLecWsGLkmSh2o1uVPdlzPoMrQZb3uZFsq19sKGKsiLZktXC4oqeYLHCdLpDm3t8mC3sucT15b6c8wM60mCUg==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-auth-2.5.0.tgz,
+        integrity: sha512-FOUKtqJezHBMDcukqGIkv3xujaQUArB69T7t8Q7DshnBNILcD0FPAuvviIPVGjEspJXPqezHHFS01basNpf/aw==,
+        tarball: https://npm.pkg.github.com/download/@munaxa/auth/2.5.0/ef66aec08c39fd7e352d84b769ffab2e72df3297,
       }
     engines: { node: '>=22.12.0' }
 
   '@munaxa/cache@2.5.0':
     resolution:
       {
-        integrity: sha512-CcSr31c722nGRkDQoFBOqVfzi0cs57QMFlVd0kDGOPhW37G8g7WBuNt+wvSc2ji8Cyafz3GN3cgfWL0WtJFo2w==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-cache-2.5.0.tgz,
+        integrity: sha512-CJ3gGEfZ3rCWq3m3C51XOk9Li6hQ053BgmGA6VTSrI8L2ApwyL1UdyBReoCY3FDkq9HajjoJNejKaYhkaPbFKw==,
+        tarball: https://npm.pkg.github.com/download/@munaxa/cache/2.5.0/4edb2e9eff6690bcfca224417bac11b2b323edb6,
       }
     engines: { node: '>=22.12.0' }
 
@@ -798,15 +798,15 @@ packages:
     resolution:
       {
         integrity: sha512-RGzZ+G7OJIiBPDf4urJV2Ef+A4sFD2dp0sKaRChZ5fo5CVSGOx2KGsD7LXy4TW3peSdZ0xb4RztY9VrHxza2YA==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-config-2.5.0.tgz,
+        tarball: https://npm.pkg.github.com/download/@munaxa/config/2.5.0/7fd0a76e19d667f05ec1d380ae5763d1b5c62b1e,
       }
     engines: { node: '>=22.12.0' }
 
   '@munaxa/conformance@2.5.0':
     resolution:
       {
-        integrity: sha512-BO3hspYzOIMnjZ3tmthe7NqrqXds07C7LbYeYgVT6dC89Y7D5OpwNBjb16gvTJjqQl49zJB7WeYEf46iBTd4Yg==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-conformance-2.5.0.tgz,
+        integrity: sha512-jFVmQa8vjpvWjv7liiyUHW11F2EujLUJZSfw/cIkbUsJwIMC6GKo6jVnEZ17W7nN6clIHxDRgRovp9tRPK8i3Q==,
+        tarball: https://npm.pkg.github.com/download/@munaxa/conformance/2.5.0/1c0f03ab38e697ef73b0ef4f069e60fb2d7cf920,
       }
     engines: { node: '>=22.12.0' }
 
@@ -814,7 +814,7 @@ packages:
     resolution:
       {
         integrity: sha512-KCizatT0QgBqyFpwrbqlTBTuDZXfiH/pILBgldjwe/45C2gD4sw4+3i6yDnb+H8n2vJQccJEgGYixA/5/nyA5A==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-crypto-2.5.0.tgz,
+        tarball: https://npm.pkg.github.com/download/@munaxa/crypto/2.5.0/a9ef607120bf5fc119aee43ba8476bccd679d4dc,
       }
     engines: { node: '>=22.12.0' }
 
@@ -822,7 +822,7 @@ packages:
     resolution:
       {
         integrity: sha512-4Thy5D+Eem6rCPtzLCMZrX/ibEunuJfT2YgIeVvGdPcZCJM3JkuoIVUhdub96aw93F1RcYT/l7W2F9V0b96v4Q==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-interfaces-2.5.0.tgz,
+        tarball: https://npm.pkg.github.com/download/@munaxa/interfaces/2.5.0/fa4eaa3c9ff9d3abaa8eec4dcafde3b0391210f1,
       }
     engines: { node: '>=22.12.0' }
 
@@ -830,23 +830,23 @@ packages:
     resolution:
       {
         integrity: sha512-9HhanndJOhNQy+6s42wWsvqqMAugocl7etL4gAUWSpXGM1JePPIraVg6fPtNENyyFV7MWoBYS6K55JbbwA1BSw==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-logging-2.5.0.tgz,
+        tarball: https://npm.pkg.github.com/download/@munaxa/logging/2.5.0/9b60d769246abd1d91bc587685f144b39972a658,
       }
     engines: { node: '>=22.12.0' }
 
   '@munaxa/rbac@2.5.0':
     resolution:
       {
-        integrity: sha512-Vu4Zh+mrXejfWD7s7zxKlpTg4K0SNsiNl1l0wG6U62p8RCAvCSHvE/CWTWk3NQ6BcGLUWXJaBWxRAIOoY2tF+g==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-rbac-2.5.0.tgz,
+        integrity: sha512-jTvSspl1TR0NVsXtNaMYT/HXUMxNnlYC4ApSwOybOMxPrmv1vfvfQ9Q36fVEZfY2Qwv8UCSesb5QpUOpJBJZcQ==,
+        tarball: https://npm.pkg.github.com/download/@munaxa/rbac/2.5.0/4272766cc544c146e9576417c2670674e09a9782,
       }
     engines: { node: '>=22.12.0' }
 
   '@munaxa/security@2.5.0':
     resolution:
       {
-        integrity: sha512-MFYl77WyfE8MqdHwbnSXIwI/FwCmAUHK3C8sNkNlO/Y6fcLqNEdMqGuskUvsMWj7rjsrQ2iJaTObD9ukbYRcCA==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-security-2.5.0.tgz,
+        integrity: sha512-YJb0noWF2aOZSNF4HqLrL/Nxl0Zwvpc4W0q73h9nA+bqdmqb0pR+lnbxGZ6PJonFaejLfuK7lgApgSk7HXh7Tw==,
+        tarball: https://npm.pkg.github.com/download/@munaxa/security/2.5.0/b8f6f39034857cc08e897e63f8534c408e619edc,
       }
     engines: { node: '>=22.12.0' }
 
@@ -854,7 +854,7 @@ packages:
     resolution:
       {
         integrity: sha512-sswECZ0H49aHiCB21SezwnMMoToNEUn53L1RnjOZTxfTJSlFtRB2bSmKzwTNXLCU0FKC0jZKMfWKTWycSe5yqQ==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-session-2.5.0.tgz,
+        tarball: https://npm.pkg.github.com/download/@munaxa/session/2.5.0/750d020353955ddd01f3d2d99bf9701d68bf0fcd,
       }
     engines: { node: '>=22.12.0' }
 
@@ -862,7 +862,7 @@ packages:
     resolution:
       {
         integrity: sha512-/8oRfcyez/CnQ0hYkpzwEUmRjqbZSX5aoaZN/93Wm7agqSiQ3b6xs55O6c0rb1srIHzrrSHl50vJ55rRRY1kHQ==,
-        tarball: http://127.0.0.1:4874/tarballs/munaxa-types-2.5.0.tgz,
+        tarball: https://npm.pkg.github.com/download/@munaxa/types/2.5.0/0fa8f0bc4f514cece9a03df7b6c585dd29d9cede,
       }
     engines: { node: '>=22.12.0' }
 
