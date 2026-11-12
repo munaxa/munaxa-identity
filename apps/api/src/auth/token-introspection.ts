@@ -1,4 +1,6 @@
 import { Controller, Get, Inject, Req, Res } from '@nestjs/common';
+import type { CachePort } from '@munaxa/interfaces';
+import { RateLimiter, type RateLimitRule } from '@munaxa/security';
 import type { Request, Response } from 'express';
 import type { Logger } from 'pino';
 
@@ -52,7 +54,18 @@ export class TokenIntrospectionController {
     response.setHeader('cache-control', 'no-store');
     response.setHeader('pragma', 'no-cache');
 
-    const outcome = await introspectAccessToken(this.security, bearerOf(request));
+    const outcome = await introspectAccessToken(
+      this.security,
+      bearerOf(request),
+      this.security.introspectionLimiter,
+    );
+    if (outcome.kind === 'limited') {
+      response
+        .status(429)
+        .setHeader('retry-after', String(outcome.retryAfterSeconds))
+        .json({ code: 'RATE_LIMITED' });
+      return;
+    }
     if (outcome.kind === 'unavailable') {
       // The token is never logged: it is a live credential until it expires.
       this.logger.error(
@@ -78,7 +91,27 @@ export type IntrospectionAnswer =
 
 export type IntrospectionOutcome =
   | { readonly kind: 'answered'; readonly answer: IntrospectionAnswer }
+  | { readonly kind: 'limited'; readonly retryAfterSeconds: number }
   | { readonly kind: 'unavailable' };
+
+/** True for the introspection route, however the global prefix spells the path. */
+export const isIntrospection = (path: string): boolean => path.endsWith('/auth/introspect');
+
+/**
+ * Per-account limit on introspection answers, applied once the token resolves to an account.
+ *
+ * The edge keys introspection by caller address, and every product task behind one NAT address
+ * shares that key, so the edge limit is set high (`introspect-per-ip` in `platform/security.ts`)
+ * and this one contains a single account: a product asks about each live token at most once per
+ * cache window (5 s for Work), so 600 a minute is fifty concurrently live tokens. Past it, that
+ * account's product requests are refused and nobody else's are.
+ */
+export const INTROSPECTION_RULES: readonly RateLimitRule[] = [
+  { id: 'introspect-per-user', dimension: 'user', limit: 600, window: 60 * 1_000 },
+];
+
+export const createIntrospectionLimiter = (cache: CachePort): RateLimiter =>
+  new RateLimiter({ cache, rules: [...INTROSPECTION_RULES] });
 
 const INACTIVE: IntrospectionOutcome = { kind: 'answered', answer: { active: false } };
 
@@ -93,6 +126,7 @@ const INACTIVE: IntrospectionOutcome = { kind: 'answered', answer: { active: fal
 export const introspectAccessToken = async (
   security: Pick<SecurityStack, 'tokens' | 'sessions' | 'directory'>,
   accessToken: string | undefined,
+  limiter?: Pick<RateLimiter, 'check'>,
 ): Promise<IntrospectionOutcome> => {
   if (accessToken === undefined) return INACTIVE;
   let resolved;
@@ -104,6 +138,16 @@ export const introspectAccessToken = async (
   if (!resolved.ok) return INACTIVE;
 
   const { claims, sessionId, tenantId, userId } = resolved.principal;
+  if (limiter !== undefined) {
+    const decision = await limiter.check({
+      method: 'GET',
+      path: '/api/auth/introspect',
+      tenantId,
+      userId,
+    });
+    if (!decision.allowed)
+      return { kind: 'limited', retryAfterSeconds: decision.retryAfterSeconds };
+  }
   return {
     kind: 'answered',
     answer: { active: true, sub: userId, tid: tenantId, sid: sessionId, exp: claims.exp },

@@ -78,7 +78,7 @@ export class EdgeMiddleware implements NestMiddleware {
 
     const platformRequest: PlatformRequest = {
       method: request.method,
-      path: request.path,
+      path: fullPathOf(request),
       headers: request.headers as Record<string, string | undefined>,
       cookies: (request as Request & { cookies?: Record<string, string> }).cookies ?? {},
       body: request.body as unknown,
@@ -98,6 +98,19 @@ export class EdgeMiddleware implements NestMiddleware {
     next();
   }
 }
+
+/**
+ * The request's whole path, prefix included, without the query.
+ *
+ * Not `request.path`: Nest mounts this middleware for every route, and Express then reports the
+ * path relative to that mount, which is `/` for every request. Every path-matched rule (the login,
+ * password-reset, MFA and introspection limits) would silently never match.
+ */
+const fullPathOf = (request: Request): string => {
+  const raw = request.originalUrl || request.url || '/';
+  const end = raw.search(/[?#]/);
+  return end === -1 ? raw : raw.slice(0, end);
+};
 
 const headerOf = (request: Request, name: string): string | undefined => {
   const value = request.headers[name];

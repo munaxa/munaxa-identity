@@ -75,8 +75,11 @@ The access token is a 15-minute ES256 JWT. After any revocation above:
   `{ active: false }` (`no-store`), or 503 `AUTH_UNAVAILABLE` when a dependency fails, which Work
   treats as a refusal. Work reuses a positive answer for at most `PLATFORM_AUTH_REVOCATION_CACHE_MS`
   (default 5 s) from when it asked, so a revocation committed at R stops a token at every Work
-  instance for requests received after R + 5 s. The route is under the edge's `api-per-ip` limit
-  (300 per minute per caller address), which bounds Work's throughput per task; see Work ADR-0080.
+  instance for requests received after R + 5 s. The route is carved out of the edge's browser
+  limit `api-per-ip` (300 per minute), which every Work task behind one NAT address would share,
+  and has its own `introspect-per-ip` (12,000 per minute) plus `introspect-per-user` (600 answers
+  per minute per account, then 429 `RATE_LIMITED`), so one account cannot exhaust the limit for
+  everyone else. See Work ADR-0080.
 
 ## Cutting someone off now
 
