@@ -1,0 +1,61 @@
+# TEMPORARY (identity#18 only, removed before merge). Regenerates pnpm-lock.yaml's 12 @munaxa
+# entries against GitHub Packages after the Platform 2.5.0 publication, and downloads the 13
+# published 2.5.0 tarballs so their contents can be compared with the reviewed candidate.
+# Read-only: contents: read, packages: read. Uploads the lockfile, tarballs and digests as an
+# artifact; publishes, pushes and writes nothing.
+name: TEMP regenerate lockfile against GitHub Packages
+
+on:
+  push:
+    branches: [claude/project-thread-1rsder]
+    paths: ['.github/workflows/tmp-regen-lockfile.yml', '.github/tmp-regen/**']
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  regen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: '@munaxa'
+      - name: Regenerate the @munaxa resolutions
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+        run: |
+          set -euo pipefail
+          node .github/tmp-regen/drop-munaxa-resolutions.mjs pnpm-lock.yaml
+          pnpm install --lockfile-only --fix-lockfile
+          echo "127.0.0.1 references: $(grep -c 127.0.0.1 pnpm-lock.yaml || true)"
+          mkdir -p out/tarballs
+          cp pnpm-lock.yaml out/
+      - name: Download the 13 published 2.5.0 tarballs and their registry metadata
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd out/tarballs
+          for n in types interfaces crypto config cache logging audit rbac session security notifications auth conformance; do
+            npm pack "@munaxa/$n@2.5.0" --registry https://npm.pkg.github.com >/dev/null
+            npm view "@munaxa/$n" versions dist-tags time --json --registry https://npm.pkg.github.com > "../view-$n.json"
+            npm view "@munaxa/$n@2.5.0" dist.integrity dist.shasum gitHead --json --registry https://npm.pkg.github.com > "../dist-$n.json"
+          done
+          npm view "@munaxa/licensing" versions dist-tags --json --registry https://npm.pkg.github.com > ../view-licensing.json
+          sha512sum *.tgz > ../SHA512SUMS.txt
+          node ../../.github/tmp-regen/content-digest.mjs *.tgz > ../CONTENT-DIGESTS.txt
+          cat ../CONTENT-DIGESTS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: regen-output
+          path: out/
+          retention-days: 7
