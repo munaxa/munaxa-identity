@@ -165,6 +165,9 @@ jobs:
               fi
             done
           fi
+          # The operating-system checks, shared with CI: zlib carries the CVE-2026-4738 fix, the
+          # packages are exactly the pinned base's, and the platform is linux/amd64.
+          .github/scripts/verify-image.sh "$REF" "${{ matrix.target }}"
           {
             echo "### ${{ matrix.repository }}"
             echo "\`$REF\` from \`$SHA\`, runs as \`$user\`"

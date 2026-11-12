@@ -178,3 +178,60 @@ jobs:
         run: pnpm audit --audit-level high
         env:
           NODE_AUTH_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+
+  # Both images, built the way publish-images-ecr.yml builds them, and checked the way it checks
+  # them, so a Dockerfile change is proven on the pull request rather than at release time. Nothing
+  # is pushed. The package credential reaches the build only as a BuildKit secret, as in the release.
+  image:
+    name: Images (runtime and migrate)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # A tag is a promise someone else can change. Every image the Dockerfile names (FROM, COPY
+      # --from, RUN --mount from=) is a digest or an earlier stage. Instructions are case-insensitive.
+      - name: Every base image is pinned by digest
+        run: |
+          set -euo pipefail
+          file=apps/api/Dockerfile
+          # In file order, so a name counts as a stage only once it is defined (Docker pulls a forward name).
+          stages=" "
+          found=0
+          while IFS= read -r line; do
+            refs=""
+            name=""
+            if printf '%s\n' "$line" | grep -qiE '^[[:space:]]*FROM[[:space:]]'; then
+              found=1
+              refs="$(printf '%s\n' "$line" | awk '{for (i = 2; i <= NF; i++) if ($i !~ /^--/) { print $i; break }}')"
+              name="$(printf '%s\n' "$line" | sed -nE 's/.*[[:space:]][Aa][Ss][[:space:]]+([^[:space:]]+)[[:space:]]*$/\1/p')"
+            fi
+            refs="$refs $(printf '%s\n' "$line" | grep -oiE -- '(--|,)from=[^[:space:],]+' | sed -E 's/^(--|,)[Ff][Rr][Oo][Mm]=//' || true)"
+            for ref in $refs; do
+              case "$stages" in *" $ref "*) continue ;; esac
+              printf '%s' "$ref" | grep -qE '^[0-9]+$' && continue
+              printf '%s' "$ref" | grep -qE '@sha256:[0-9a-f]{64}$' || { echo "::error::$ref is not pinned by digest"; exit 1; }
+            done
+            [ -z "$name" ] || stages="$stages$name "
+          done < "$file"
+          [ "$found" = 1 ] || { echo "::error::no FROM found in $file"; exit 1; }
+          echo "every image reference in $file is a digest or an earlier stage"
+
+      - name: Build runtime and migrate
+        env:
+          NPM_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+        run: |
+          set -euo pipefail
+          for target in runtime migrate; do
+            docker build --platform linux/amd64 --file apps/api/Dockerfile --target "$target" \
+              --secret id=npm_token,env=NPM_TOKEN --tag "identity-$target:ci" .
+          done
+
+      - name: Verify both images (zlib CVE-2026-4738 fix, non-root, no credential)
+        run: |
+          set -euo pipefail
+          .github/scripts/verify-image.sh identity-runtime:ci runtime
+          .github/scripts/verify-image.sh identity-migrate:ci migrate
