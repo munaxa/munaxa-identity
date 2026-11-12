@@ -127,10 +127,22 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      # The cache connection suite (cache-connection.integration.test.ts) starts its own Redis
+      # servers: a replication pair for the READONLY failover and a TLS-only server with its own CA.
+      # The service container above cannot be reconfigured, so the runner gets the server binary.
+      - name: Redis server for the cache connection tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq redis-server
+          sudo systemctl stop redis-server || true
+          redis-server --version
+
       # Row-level security, Platform's port conformance and the cookie-size ceiling. These need a
       # real PostgreSQL and the real roles; none of them can be observed from a schema file.
       - name: Integration, security and conformance tests
         run: pnpm test:integration
+        env:
+          CACHE_CONNECTION_TEST_REQUIRE_SERVER: '1'
 
       - name: Work permission catalogue drift
         run: pnpm check:catalogue-drift

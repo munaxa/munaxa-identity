@@ -12,3 +12,4 @@ export {
   type IdentityEmailTransport,
 } from './password-recovery.js';
 export { parseMfaKeys, reusesSecret, type MfaKeyEntry, type ParsedMfaKeys } from './mfa-keys.js';
+export { isLoopbackHost, redactRedisUrl, redisUrlIssues } from './redis-url.js';

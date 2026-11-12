@@ -21,6 +21,7 @@ import {
 
 import { PASSWORD_RECOVERY_FIELDS, passwordRecoveryIssues } from './password-recovery.js';
 import { parseMfaKeys, reusesSecret } from './mfa-keys.js';
+import { redactRedisUrl, redisUrlIssues } from './redis-url.js';
 
 /**
  * Identity's environment contract.
@@ -288,13 +289,14 @@ export const IDENTITY_SCHEMA = extendConfig(
       issues.push(...mfaPolicyIssues(resolved));
 
       if (production) {
-        if (resolved.MUNAXA_REDIS_URL === '') {
+        if (resolved.MUNAXA_REDIS_URL.trim() === '') {
           issues.push({
             key: 'REDIS_URL',
             problem:
               'is required in production. Without a shared counter store, login lockout is disabled and the permission cache diverges per replica.',
           });
         }
+        issues.push(...redisUrlIssues(resolved.MUNAXA_REDIS_URL, production));
         if (resolved.LOG_PRETTY) {
           issues.push({ key: 'LOG_PRETTY', problem: 'must be false in production.' });
         }
@@ -482,5 +484,13 @@ export const loadEnvironment = (
   );
 
 /** The rendering safe to log or serve: every field marked `secret` is replaced. */
-export const describeEnvironment = (resolved: IdentityEnvironment): Record<string, unknown> =>
-  redactConfig(IDENTITY_SCHEMA, resolved);
+export const describeEnvironment = (resolved: IdentityEnvironment): Record<string, unknown> => {
+  const described = redactConfig(IDENTITY_SCHEMA, resolved);
+  // REDIS_URL is not a secret field in the platform schema, but its userinfo is the store's
+  // password (the sidecar password or the cache AUTH token): never show it.
+  const url = described.MUNAXA_REDIS_URL;
+  if (typeof url === 'string' && url.trim() !== '') {
+    described.MUNAXA_REDIS_URL = redactRedisUrl(url);
+  }
+  return described;
+};
