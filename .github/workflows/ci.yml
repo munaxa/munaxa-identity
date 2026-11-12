@@ -198,15 +198,26 @@ jobs:
         run: |
           set -euo pipefail
           file=apps/api/Dockerfile
-          # Stage names, then every image reference: the FROM image and any --from= (COPY or RUN --mount).
-          stages="$(grep -iE '^[[:space:]]*FROM[[:space:]]' "$file" | sed -nE 's/.*[[:space:]][Aa][Ss][[:space:]]+([^[:space:]]+)[[:space:]]*$/\1/p')"
-          refs="$( { grep -iE '^[[:space:]]*FROM[[:space:]]' "$file" | awk '{for (i = 2; i <= NF; i++) if ($i !~ /^--/) { print $i; break }}'
-                     grep -oiE -- '(--|,)from=[^[:space:],]+' "$file" | sed -E 's/^(--|,)[Ff][Rr][Oo][Mm]=//'; } )"
-          [ -n "$refs" ] || { echo "::error::no FROM found in $file"; exit 1; }
-          for ref in $refs; do
-            if printf '%s\n' "$stages" | grep -qx -- "$ref" || printf '%s' "$ref" | grep -qE '^[0-9]+$'; then continue; fi
-            printf '%s' "$ref" | grep -qE '@sha256:[0-9a-f]{64}$' || { echo "::error::$ref is not pinned by digest"; exit 1; }
-          done
+          # In file order, so a name counts as a stage only once it is defined (Docker pulls a forward name).
+          stages=" "
+          found=0
+          while IFS= read -r line; do
+            refs=""
+            name=""
+            if printf '%s\n' "$line" | grep -qiE '^[[:space:]]*FROM[[:space:]]'; then
+              found=1
+              refs="$(printf '%s\n' "$line" | awk '{for (i = 2; i <= NF; i++) if ($i !~ /^--/) { print $i; break }}')"
+              name="$(printf '%s\n' "$line" | sed -nE 's/.*[[:space:]][Aa][Ss][[:space:]]+([^[:space:]]+)[[:space:]]*$/\1/p')"
+            fi
+            refs="$refs $(printf '%s\n' "$line" | grep -oiE -- '(--|,)from=[^[:space:],]+' | sed -E 's/^(--|,)[Ff][Rr][Oo][Mm]=//' || true)"
+            for ref in $refs; do
+              case "$stages" in *" $ref "*) continue ;; esac
+              printf '%s' "$ref" | grep -qE '^[0-9]+$' && continue
+              printf '%s' "$ref" | grep -qE '@sha256:[0-9a-f]{64}$' || { echo "::error::$ref is not pinned by digest"; exit 1; }
+            done
+            [ -z "$name" ] || stages="$stages$name "
+          done < "$file"
+          [ "$found" = 1 ] || { echo "::error::no FROM found in $file"; exit 1; }
           echo "every image reference in $file is a digest or an earlier stage"
 
       - name: Build runtime and migrate

@@ -48,7 +48,8 @@ lib="$(in_image "ldd /sbin/apk | sed -n 's/^[[:space:]]*libz\.so\.1 => \([^ ]*\)
 [ -n "$lib" ] || fail "cannot find the libz the loader maps"
 lib="$(in_image "readlink -f '$lib'")"
 case "$lib" in */libz.so.1.4*) ;; *) fail "the loader maps $lib, not zlib 1.4";; esac
-stray="$(in_image "find / -xdev -name 'libz.so*' 2>/dev/null | while read -r f; do apk info -W \"\$f\" 2>/dev/null | grep -q ' is owned by zlib-$zlib\$' || echo \"\$f\"; done")"
+# As root for this read only, so a libz in a directory the image user cannot read is still found.
+stray="$(docker run --rm --user 0 --entrypoint sh "$REF" -c "find / -xdev -name 'libz.so*' 2>/dev/null | while read -r f; do apk info -W \"\$f\" 2>/dev/null | grep -q ' is owned by zlib-$zlib\$' || echo \"\$f\"; done")"
 [ -z "$stray" ] || fail "libz files not owned by zlib-$zlib: $(echo "$stray" | tr '\n' ' ')"
 
 # The base the Dockerfile pins; every FROM must be either it or an earlier stage.
