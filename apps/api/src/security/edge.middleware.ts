@@ -154,7 +154,14 @@ export class EdgeMiddleware implements NestMiddleware {
     const login = isLogin(method, route);
     const mfa = isMfa(method, route);
     const body = request.body as Record<string, unknown> | undefined;
-    const identifier = login ? identifierSubject(body?.identifier, body?.organisation) : undefined;
+    // The organisation the sign-in resolves to, as `AuthService` resolves it: a missing or blank
+    // field means the default, so naming the default explicitly is not a second budget.
+    const typed = body?.organisation;
+    const organisation =
+      typeof typed === 'string' && typed.trim() !== ''
+        ? typed
+        : this.environment.IDENTITY_DEFAULT_ORGANISATION;
+    const identifier = login ? identifierSubject(body?.identifier, organisation) : undefined;
     const credential = mfa ? this.credentialOf(request, route) : undefined;
     return this.security.authEdgeLimiter.check({
       method,

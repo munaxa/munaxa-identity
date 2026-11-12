@@ -85,6 +85,7 @@ const VARIABLES = {
   EDGE_MFA_PER_IP_LIMIT: String(LIMITS.mfaPerIp),
   EDGE_MFA_PER_SESSION_LIMIT: String(LIMITS.mfaPerSession),
   LOGIN_MAX_ATTEMPTS: String(LIMITS.lockoutAfter),
+  IDENTITY_DEFAULT_ORGANISATION: org.key,
 };
 
 type App = Awaited<ReturnType<typeof createApplication>>;
@@ -410,6 +411,26 @@ describe('sign-in: POST /api/auth/login', () => {
 });
 
 describe('review round 1', () => {
+  it('counts the default organisation once: leaving it out, blank or naming it is one budget', async () => {
+    const identifier = freshIdentifier();
+    const spellings = [undefined, '', '  ', org.key, ` ${org.key.toUpperCase()} `];
+    const outcomes: string[] = [];
+    for (let attempt = 0; attempt < LIMITS.loginPerIdentifier + 2; attempt += 1) {
+      const organisation = spellings[attempt % spellings.length];
+      const response = await send('POST', '/api/auth/login', {
+        ip: freshIp(),
+        body: {
+          identifier,
+          password: 'wrong-password',
+          ...(organisation === undefined ? {} : { organisation }),
+        },
+      });
+      outcomes.push(edgeLimited(response) ? 'edge' : String(response.status));
+    }
+    expect(outcomes.slice(0, LIMITS.loginPerIdentifier)).not.toContain('edge');
+    expect(outcomes.slice(LIMITS.loginPerIdentifier)).toEqual(['edge', 'edge']);
+  });
+
   it('scopes the identifier limit by organisation: a made-up organisation cannot hold a real sign-in', async () => {
     const someone = await person();
     for (let attempt = 0; attempt <= LIMITS.loginPerIdentifier; attempt += 1) {
