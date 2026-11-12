@@ -271,7 +271,11 @@ describe('sign-in: POST /api/auth/login', () => {
     const refused = await loginAs(ip);
     expect(edgeLimited(refused)).toBe(true);
     expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
-    expect(Number(refused.headers['retry-after'])).toBeLessThanOrEqual(5 * 60);
+    // Retry-After is when the sliding window next admits a request. Platform 2.5.0 computes it
+    // truthfully: after 2x the limit in the current fixed window, that is the end of this window
+    // plus the time the carried-over count needs to decay, so it lies anywhere below two windows
+    // (5 min each) depending on where the test lands in the window. 2.4.1 reported at most one.
+    expect(Number(refused.headers['retry-after'])).toBeLessThan(2 * 5 * 60);
     expect(refused.headers['ratelimit-limit']).toBe(String(LIMITS.loginPerIp));
     expect(JSON.parse(refused.body)).toMatchObject({ code: 'SECURITY_RATE_LIMITED' });
   });
