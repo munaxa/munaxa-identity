@@ -50,6 +50,7 @@ The last command prints the account's `sub`. That value is what Munaxa Work need
 | `POST /api/auth/refresh`                | Rotates both, re-resolves permissions, detects reuse.               |
 | `POST /api/auth/logout`                 | Revokes the session and the lineage. Works on an expired token.     |
 | `GET /api/auth/session`                 | Subject and expiry. Never a token, never a permission set.          |
+| `GET /api/auth/introspect`              | For products: is this bearer access token's session still live?     |
 | `GET /api/auth/sessions`                | The caller's live sessions: times, network prefix, device label.    |
 | `DELETE /api/auth/sessions/:id`         | Signs out one of the caller's own sessions, lineage included.       |
 | `POST /api/auth/sessions/revoke-others` | Signs out every session except the one making the request.          |
