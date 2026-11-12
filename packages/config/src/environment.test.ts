@@ -3,6 +3,11 @@ import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import { loadEnvironment, describeEnvironment } from './environment.js';
+import { isLoopbackHost } from './redis-url.js';
+
+/** A production cache URL of the approved shape: TLS, a generated password (never a real token). */
+const CACHE_PASSWORD = randomBytes(24).toString('base64url');
+const CACHE_URL = `rediss://:${CACHE_PASSWORD}@cache.example.internal:6379`;
 
 /**
  * What this suite is actually about: a misconfigured authentication authority must refuse to
@@ -148,20 +153,18 @@ describe('production fails closed', () => {
 
   it('refuses pretty logging', () => {
     expect(() =>
-      loadEnvironment({ ...production, REDIS_URL: 'redis://cache:6379', LOG_PRETTY: 'true' }),
+      loadEnvironment({ ...production, REDIS_URL: CACHE_URL, LOG_PRETTY: 'true' }),
     ).toThrowError(/LOG_PRETTY/);
   });
 
   it('requires the MFA key ring', () => {
-    expect(() => loadEnvironment({ ...production, REDIS_URL: 'redis://cache:6379' })).toThrowError(
+    expect(() => loadEnvironment({ ...production, REDIS_URL: CACHE_URL })).toThrowError(
       /MFA_ENCRYPTION_KEYS: is required in production/,
     );
   });
 
   it('accepts a complete production environment', () => {
-    expect(() =>
-      loadEnvironment({ ...production, REDIS_URL: 'redis://cache:6379', ...MFA }),
-    ).not.toThrow();
+    expect(() => loadEnvironment({ ...production, REDIS_URL: CACHE_URL, ...MFA })).not.toThrow();
   });
 });
 
@@ -422,5 +425,102 @@ describe('secrets mounted as files', () => {
         read,
       ),
     ).toThrowError(/could not be read/);
+  });
+});
+
+describe('REDIS_URL in production (shared cache over TLS, or the loopback sidecar)', () => {
+  const production = {
+    ...complete,
+    NODE_ENV: 'production',
+    IDENTITY_BASE_URL: 'https://id.example',
+    IDENTITY_PASSWORD_RESET: 'disabled',
+    ...MFA,
+  };
+  const password = randomBytes(24).toString('base64url');
+
+  it('accepts the shared cache over TLS with a password', () => {
+    expect(() => loadEnvironment({ ...production, REDIS_URL: CACHE_URL })).not.toThrow();
+  });
+
+  it('refuses plaintext to a network host', () => {
+    expect(() =>
+      loadEnvironment({
+        ...production,
+        REDIS_URL: `redis://:${password}@cache.example.internal:6379`,
+      }),
+    ).toThrowError(/must use rediss:\/\/ \(TLS\) in production for a host that is not loopback/);
+  });
+
+  it('refuses plaintext to a private address, which is still the network', () => {
+    expect(() =>
+      loadEnvironment({ ...production, REDIS_URL: `redis://:${password}@10.131.64.10:6379` }),
+    ).toThrowError(/rediss:\/\//);
+  });
+
+  it('accepts the in-task sidecar on loopback without TLS', () => {
+    for (const host of ['127.0.0.1', 'localhost', '[::1]']) {
+      expect(() =>
+        loadEnvironment({ ...production, REDIS_URL: `redis://:${password}@${host}:6379` }),
+      ).not.toThrow();
+    }
+  });
+
+  it('refuses a production URL without a password, loopback or not', () => {
+    expect(() =>
+      loadEnvironment({ ...production, REDIS_URL: 'rediss://cache.example.internal:6379' }),
+    ).toThrowError(/must carry a password/);
+    expect(() =>
+      loadEnvironment({ ...production, REDIS_URL: 'redis://127.0.0.1:6379' }),
+    ).toThrowError(/must carry a password/);
+  });
+
+  it('refuses connection options in a query string', () => {
+    expect(() =>
+      loadEnvironment({ ...production, REDIS_URL: `${CACHE_URL}?tls=false` }),
+    ).toThrowError(/query string/);
+  });
+
+  it('refuses another scheme', () => {
+    expect(() =>
+      loadEnvironment({
+        ...production,
+        REDIS_URL: `https://:${password}@cache.example.internal:6379`,
+      }),
+    ).toThrowError(/must use redis:\/\/ \(loopback sidecar\) or rediss:\/\//);
+  });
+
+  it('never quotes the URL, which holds the password', () => {
+    let message = '';
+    try {
+      loadEnvironment({
+        ...production,
+        REDIS_URL: `redis://:${password}@cache.example.internal:6379`,
+      });
+    } catch (error) {
+      message = String((error as Error).message);
+    }
+    expect(message).toMatch(/REDIS_URL/);
+    expect(message).not.toContain(password);
+  });
+
+  it('keeps development unchanged: plaintext and no password are fine outside production', () => {
+    expect(() =>
+      loadEnvironment({ ...complete, REDIS_URL: 'redis://cache.example.internal:6379' }),
+    ).not.toThrow();
+    expect(() =>
+      loadEnvironment({ ...complete, REDIS_URL: 'redis://localhost:6379' }),
+    ).not.toThrow();
+  });
+
+  it('treats only 127.0.0.0/8, ::1 and localhost as loopback', () => {
+    expect(isLoopbackHost('127.0.0.1')).toBe(true);
+    expect(isLoopbackHost('127.255.0.9')).toBe(true);
+    expect(isLoopbackHost('[::1]')).toBe(true);
+    expect(isLoopbackHost('LOCALHOST')).toBe(true);
+    expect(isLoopbackHost('127.0.0.1.example.com')).toBe(false);
+    expect(isLoopbackHost('128.0.0.1')).toBe(false);
+    expect(isLoopbackHost('127.0.0.256')).toBe(false);
+    expect(isLoopbackHost('localhost.example.com')).toBe(false);
+    expect(isLoopbackHost('::ffff:127.0.0.1')).toBe(false);
   });
 });

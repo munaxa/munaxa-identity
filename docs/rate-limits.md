@@ -72,10 +72,19 @@ Nothing here needs an infrastructure change to adjust.
 ## Multiple tasks
 
 All counters live in the one Redis the task uses. Several tasks share a limit exactly when they use
-the **same** Redis. The current AWS stack runs Valkey as a sidecar of each Identity task
-(`127.0.0.1:6379`), so with `desired_counts.identity` above 1 every limit, lockout and MFA challenge
-would exist once per task: see the owner decision in the 2026-11-12 rate-limiting report. Run one
-Identity task per Valkey until a shared store exists.
+the **same** Redis. The AWS stack (munaxa-platform `infra/aws`) has two approved topologies and its
+Terraform validations refuse any other:
+
+- **Testing:** one Identity task with a Valkey sidecar (`redis://:<password>@127.0.0.1:6379`). ECS
+  deploys it stop-first (0 % minimum healthy, 100 % maximum), so two tasks with two stores never
+  serve at once. A replacement starts with an empty store.
+- **Production:** several Identity tasks on one shared ElastiCache for Valkey, cluster mode disabled,
+  TLS required, AUTH token, `noeviction` (`rediss://:<token>@<primary endpoint>:6379`). Every limit,
+  lockout, MFA challenge and replay marker is fleet-wide. Production refuses a non-loopback
+  `REDIS_URL` that is not `rediss://` or has no password (`packages/config/src/redis-url.ts`).
+
+After a failover the client reconnects on `READONLY` and resends the refused write once (it did
+not run on the replica, so it is not counted twice); `apps/api/src/platform/cache.ts`.
 
 ## Failure behaviour
 

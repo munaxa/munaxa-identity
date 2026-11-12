@@ -33,7 +33,8 @@ const production: Record<string, string> = {
   NODE_ENV: 'production',
   IDENTITY_BASE_URL: 'https://id.example.test',
   CSRF_TRUSTED_ORIGINS: 'https://id.example.test',
-  REDIS_URL: 'redis://cache.internal:6379',
+  // Production's shared cache: TLS and a password (redis-url.ts). Generated, never a real token.
+  REDIS_URL: `rediss://:${randomBytes(24).toString('base64url')}@cache.internal:6379`,
   MFA_ENCRYPTION_KEYS: `mfa-1=${randomBytes(32).toString('base64url')}`,
   MFA_ENCRYPTION_PRIMARY_KID: 'mfa-1',
 };

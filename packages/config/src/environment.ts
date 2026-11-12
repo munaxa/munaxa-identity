@@ -21,6 +21,7 @@ import {
 
 import { PASSWORD_RECOVERY_FIELDS, passwordRecoveryIssues } from './password-recovery.js';
 import { parseMfaKeys, reusesSecret } from './mfa-keys.js';
+import { redisUrlIssues } from './redis-url.js';
 
 /**
  * Identity's environment contract.
@@ -295,6 +296,7 @@ export const IDENTITY_SCHEMA = extendConfig(
               'is required in production. Without a shared counter store, login lockout is disabled and the permission cache diverges per replica.',
           });
         }
+        issues.push(...redisUrlIssues(resolved.MUNAXA_REDIS_URL, production));
         if (resolved.LOG_PRETTY) {
           issues.push({ key: 'LOG_PRETTY', problem: 'must be false in production.' });
         }
