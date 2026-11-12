@@ -11,7 +11,15 @@ import type { NextFunction, Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 
 import { ENVIRONMENT, SECURITY_STACK } from '../tokens.js';
-import { isIntrospection, normalisedPath } from '../auth/token-introspection.js';
+import { MFA_CHALLENGE_COOKIE, SESSION_COOKIE } from '../auth/cookies.js';
+import {
+  canonicalRoute,
+  credentialSubject,
+  identifierSubject,
+  isLogin,
+  isMfa,
+  type AuthEdgeDecision,
+} from './auth-edge-limits.js';
 import type { SecurityStack } from '../platform/security.js';
 import type { IdentityEnvironment } from '@identity/config';
 
@@ -77,9 +85,10 @@ export class EdgeMiddleware implements NestMiddleware {
     response.setHeader('x-correlation-id', correlationId);
     (request as Request & { correlationId?: string }).correlationId = correlationId;
 
+    const route = canonicalRoute(request.originalUrl || request.url || '/');
     const platformRequest: PlatformRequest = {
       method: request.method,
-      path: edgePathOf(request),
+      path: route,
       headers: request.headers as Record<string, string | undefined>,
       cookies: (request as Request & { cookies?: Record<string, string> }).cookies ?? {},
       body: request.body as unknown,
@@ -96,27 +105,98 @@ export class EdgeMiddleware implements NestMiddleware {
       response.status(short.status).json(short.body);
       return;
     }
+
+    const decision = await this.authLimit(request, route);
+    if (decision.kind === 'limited') {
+      this.record('security.ratelimit.exceeded', {
+        rule: decision.rule,
+        retryAfterSeconds: decision.retryAfterSeconds,
+      });
+      response
+        .status(429)
+        .setHeader('retry-after', String(decision.retryAfterSeconds))
+        .setHeader('ratelimit-limit', String(decision.limit))
+        .setHeader('ratelimit-remaining', '0')
+        .json({ code: 'SECURITY_RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds });
+      return;
+    }
+    if (decision.kind === 'unavailable') {
+      // The limit on a credential route could not be read. Admitting would be an unlimited
+      // guessing window for as long as the store is down, so the request is refused as an outage.
+      this.record('security.ratelimit.exceeded', {
+        rule: decision.rule,
+        reason: 'store-unavailable',
+      });
+      response.status(503).setHeader('retry-after', '5').json({ code: 'AUTH_UNAVAILABLE' });
+      return;
+    }
     next();
   }
-}
 
-/**
- * The path the edge rules see.
- *
- * Express reports `request.path` relative to Nest's every-route mount, which is `/` for every
- * request, so Platform's path-matched rules (login, password reset) never match at this edge. That
- * is a known, separate defect: turning those rules on changes who gets locked out behind a shared
- * address, and Platform's adaptive window currently restarts its count after each refusal, so it is
- * left for its own decision rather than changed here. The one path this edge does resolve is the
- * introspection route, normalised the way Express routes it (case, repeated and trailing slashes),
- * so that it is carved out of the browser limit and given its own (`edgeRules`).
- */
-const edgePathOf = (request: Request): string => {
-  const raw = request.originalUrl || request.url || '/';
-  const end = raw.search(/[?#]/);
-  const normalised = normalisedPath(end === -1 ? raw : raw.slice(0, end));
-  return isIntrospection(normalised) ? normalised : request.path;
-};
+  /**
+   * The credential-route limits, with the subject each one counts.
+   *
+   * Sign-in: the typed identifier, trimmed and lowercased exactly as the directory finds accounts,
+   * digested (`identifierSubject`) whether or not an account exists, so the limit is not an oracle.
+   * MFA: the session's `sid` when the session cookie verifies (signature and expiry, checked
+   * locally, no database), else a digest of the challenge cookie; with neither, only the
+   * per-address rule applies and the route itself refuses the request. Raw values never leave this
+   * method — not into a key, not into a log.
+   */
+  private async authLimit(request: Request, route: string): Promise<AuthEdgeDecision> {
+    const method = request.method;
+    const login = isLogin(method, route);
+    const mfa = isMfa(method, route);
+    const body = request.body as Record<string, unknown> | undefined;
+    const identifier = login ? identifierSubject(body?.identifier) : undefined;
+    const credential = mfa ? this.credentialOf(request, route) : undefined;
+    return this.security.authEdgeLimiter.check({
+      method,
+      route,
+      ...(request.ip === undefined ? {} : { ipAddress: request.ip }),
+      ...(identifier === undefined ? {} : { identifier }),
+      ...(credential === undefined ? {} : { credential }),
+    });
+  }
+
+  private credentialOf(request: Request, route: string): string | undefined {
+    const jar = (request as Request & { cookies?: Record<string, string> }).cookies ?? {};
+    // The sign-in challenge is redeemed only with the challenge cookie; the enrolment routes accept
+    // a session first, then a challenge (as the controller does); the rest take only a session.
+    const challengeOnly = route === '/api/auth/mfa/verify';
+    const challengeAllowed = challengeOnly || route.startsWith('/api/auth/mfa/enrollment');
+    if (!challengeOnly) {
+      const session = jar[SESSION_COOKIE];
+      if (typeof session === 'string' && session !== '') {
+        try {
+          const sid = this.security.tokens.verifyAccessToken(session).sid;
+          if (typeof sid === 'string' && sid !== '') return credentialSubject('session', sid);
+        } catch {
+          // Not a session we issued, or expired: the route refuses it; only the address counts.
+        }
+      }
+    }
+    const challenge = jar[MFA_CHALLENGE_COOKIE];
+    if (challengeAllowed && typeof challenge === 'string' && challenge !== '') {
+      return credentialSubject('challenge', challenge);
+    }
+    return undefined;
+  }
+
+  private record(name: 'security.ratelimit.exceeded', detail: Record<string, unknown>): void {
+    void this.security.audit
+      .write(
+        anonymousAuditEvent(this.edgeTenant, toCorrelationId(randomUUID()), {
+          name,
+          outcome: 'failure',
+          payload: detail,
+        }),
+      )
+      .catch((error: unknown) => {
+        process.stderr.write(`[identity] edge audit write failed: ${String(error)}\n`);
+      });
+  }
+}
 
 const headerOf = (request: Request, name: string): string | undefined => {
   const value = request.headers[name];

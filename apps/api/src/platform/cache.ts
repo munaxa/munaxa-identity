@@ -37,6 +37,9 @@ export interface CacheHandle {
   close(): Promise<void>;
 }
 
+/** How long one cache command may take before it counts as a failure. */
+export const REDIS_COMMAND_TIMEOUT_MS = 2_000;
+
 export const openCache = async (redisUrl: string): Promise<CacheHandle> => {
   if (redisUrl.trim() === '') {
     // An in-process cache is reachable exactly as long as the process is.
@@ -47,7 +50,14 @@ export const openCache = async (redisUrl: string): Promise<CacheHandle> => {
       close: () => Promise.resolve(),
     };
   }
-  const client = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 3 });
+  // `commandTimeout` turns a hung store (connection open, no answer) into an error within two
+  // seconds, which every consumer already treats as unavailable: sign-in, reset and MFA refuse,
+  // the credential-route edge limits refuse with 503. Without it a hang holds each request open.
+  const client = new Redis(redisUrl, {
+    lazyConnect: true,
+    maxRetriesPerRequest: 3,
+    commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
+  });
   await client.connect();
 
   return {

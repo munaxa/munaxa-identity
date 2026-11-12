@@ -362,12 +362,35 @@ describe('the request', () => {
     ]);
     expect(outcomes[3]?.kind).toBe('rate-limited');
 
+    // Sized for a shared school or office address: 30 different people an hour, then refused.
     const perIp = [];
-    for (let i = 0; i < 6; i += 1) {
+    for (let i = 0; i < 31; i += 1) {
       perIp.push(await requestLink(built, `ip${String(i)}@example.test`, '198.51.100.200'));
     }
-    expect(perIp.slice(0, 5).every((outcome) => outcome.kind === 'accepted')).toBe(true);
-    expect(perIp[5]?.kind).toBe('rate-limited');
+    expect(perIp.slice(0, 30).every((outcome) => outcome.kind === 'accepted')).toBe(true);
+    expect(perIp[30]?.kind).toBe('rate-limited');
+  });
+
+  it('does not charge the address for a refused identifier: one person cannot spend a school’s allowance', async () => {
+    const built = await build();
+    // One identifier asked 40 times from a school address: 3 accepted, the rest refused for the
+    // identifier, and none of the refusals counted against the address.
+    for (let i = 0; i < 40; i += 1)
+      await requestLink(built, 'again@example.test', '198.51.100.201');
+    const others = [];
+    for (let i = 0; i < 27; i += 1) {
+      others.push(await requestLink(built, `pupil${String(i)}@example.test`, '198.51.100.201'));
+    }
+    expect(others.every((outcome) => outcome.kind === 'accepted')).toBe(true);
+  });
+
+  it('keeps one count after a refusal (the address limit is not adaptive)', async () => {
+    const built = await build();
+    const outcomes = [];
+    for (let i = 0; i < 45; i += 1) {
+      outcomes.push(await requestLink(built, `n${String(i)}@example.test`, '198.51.100.202'));
+    }
+    expect(outcomes.slice(30).every((outcome) => outcome.kind === 'rate-limited')).toBe(true);
   });
 
   it('fails closed when the shared limiter store is unreachable', async () => {

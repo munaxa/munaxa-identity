@@ -310,6 +310,29 @@ describe('the MFA key ring', () => {
     expect(() => loadEnvironment({ ...complete, MFA_CHALLENGE_MAX_ATTEMPTS: '50' })).toThrow();
   });
 
+  it('defaults the credential-route limits for a shared address, and refuses values below their floors', () => {
+    const env = loadEnvironment(complete);
+    expect(env.EDGE_LOGIN_PER_IP_LIMIT).toBe(300);
+    expect(env.EDGE_LOGIN_PER_IDENTIFIER_LIMIT).toBe(20);
+    expect(env.EDGE_PASSWORD_RESET_PER_IP_LIMIT).toBe(60);
+    expect(env.EDGE_MFA_PER_IP_LIMIT).toBe(300);
+    expect(env.EDGE_MFA_PER_SESSION_LIMIT).toBe(10);
+    expect(env.PASSWORD_RESET_REQUESTS_PER_IP).toBe(30);
+    expect(
+      loadEnvironment({ ...complete, EDGE_LOGIN_PER_IP_LIMIT: '1200' }).EDGE_LOGIN_PER_IP_LIMIT,
+    ).toBe(1200);
+    // A typo must not hold a whole school to a handful of sign-ins.
+    expect(() => loadEnvironment({ ...complete, EDGE_LOGIN_PER_IP_LIMIT: '10' })).toThrow(
+      /EDGE_LOGIN_PER_IP_LIMIT/,
+    );
+    expect(() => loadEnvironment({ ...complete, EDGE_MFA_PER_SESSION_LIMIT: '1' })).toThrow(
+      /EDGE_MFA_PER_SESSION_LIMIT/,
+    );
+    expect(() => loadEnvironment({ ...complete, PASSWORD_RESET_REQUESTS_PER_IP: 'many' })).toThrow(
+      /PASSWORD_RESET_REQUESTS_PER_IP/,
+    );
+  });
+
   it('names a primary only when there is a ring', () => {
     expect(() => loadEnvironment({ ...complete, MFA_ENCRYPTION_PRIMARY_KID: 'a' })).toThrowError(
       /MFA_ENCRYPTION_KEYS is empty/,

@@ -11,7 +11,7 @@ import type {
   ResetTokenStorePort,
   UserDirectoryPort,
 } from '@munaxa/interfaces';
-import { RateLimiter } from '@munaxa/security';
+import { RateLimiter, type RateLimitDecision, type RateLimitTarget } from '@munaxa/security';
 import type { CachePort } from '@munaxa/interfaces';
 import {
   PlatformError,
@@ -66,7 +66,7 @@ export interface PasswordRecoveryOptions {
   readonly tenants: { idForKey(key: string): Promise<TenantId | undefined> };
   /** Revoke every session and refresh lineage of the user. Must only touch this database. */
   readonly revokeCredentials: (tenantId: TenantId, userId: UserId) => Promise<void>;
-  readonly limiter: RateLimiter;
+  readonly limiter: Pick<RateLimiter, 'check'>;
   readonly audit: AuditService;
   readonly transport: EmailTransport | undefined;
   readonly enabled: boolean;
@@ -112,14 +112,20 @@ const TOKEN_SHAPE = /^[A-Za-z0-9_-]{20,128}$/;
 const ORGANISATION_SHAPE = /^[A-Za-z0-9._-]{1,100}$/;
 const EMAIL = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
 
-export const RESET_REQUEST_RULES = [
-  {
-    id: 'password-forgot-per-ip',
-    dimension: 'ip' as const,
-    limit: 5,
-    window: 60 * 60 * 1_000,
-    adaptiveFactor: 2,
-  },
+/** Reset requests one client address may make per hour; see `resetRequestRules`. */
+export const DEFAULT_RESET_REQUESTS_PER_IP = 30;
+
+/**
+ * The request limits, in the order they are charged.
+ *
+ * Per (organisation, identifier) first, so a refusal for one address book entry stops before the
+ * client address is charged: one person asking again and again from a school network cannot spend
+ * the whole school's allowance. The address limit is sized for a shared NAT address (a school, an
+ * office), not for one person: 5 an hour, the old value, refused the sixth pupil to forget a
+ * password within the hour. Neither rule is adaptive: in the published Platform limiter (2.4.1) an
+ * adaptive rule restarts its count after each refusal.
+ */
+export const resetRequestRules = (perIp: number = DEFAULT_RESET_REQUESTS_PER_IP) => [
   {
     // Keyed by a digest of (organisation, identifier) whether or not the account exists, so the
     // limit itself says nothing about which addresses are real. It also bounds how often anybody
@@ -129,11 +135,41 @@ export const RESET_REQUEST_RULES = [
     limit: 3,
     window: 60 * 60 * 1_000,
   },
+  {
+    id: 'password-forgot-per-ip',
+    dimension: 'ip' as const,
+    limit: perIp,
+    window: 60 * 60 * 1_000,
+  },
 ];
 
-/** The request limiter, on the shared cache. Its own instance, so its rules and failure handling are its own. */
-export const createResetLimiter = (cache: CachePort): RateLimiter =>
-  new RateLimiter({ cache, rules: RESET_REQUEST_RULES });
+/**
+ * The request limiter, on the shared cache. One limiter per rule, so a store failure on either is
+ * reported (`degraded`) rather than hidden behind the other's numbers, and the request refused.
+ */
+export class ResetRequestLimiter {
+  private readonly limiters: readonly RateLimiter[];
+
+  public constructor(cache: CachePort, perIp: number = DEFAULT_RESET_REQUESTS_PER_IP) {
+    this.limiters = resetRequestRules(perIp).map(
+      (rule) => new RateLimiter({ cache, rules: [rule] }),
+    );
+  }
+
+  public async check(target: RateLimitTarget): Promise<RateLimitDecision> {
+    let last: RateLimitDecision | undefined;
+    for (const limiter of this.limiters) {
+      last = await limiter.check(target);
+      if (last.degraded === true || !last.allowed) return last;
+    }
+    return last!;
+  }
+}
+
+export const createResetLimiter = (
+  cache: CachePort,
+  perIp: number = DEFAULT_RESET_REQUESTS_PER_IP,
+): ResetRequestLimiter => new ResetRequestLimiter(cache, perIp);
 
 export class PasswordRecovery {
   readonly #options: PasswordRecoveryOptions;
