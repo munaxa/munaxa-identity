@@ -1,8 +1,8 @@
 # TEMPORARY (identity#18 only, removed before merge). Regenerates pnpm-lock.yaml's 12 @munaxa
 # entries against GitHub Packages after the Platform 2.5.0 publication, and downloads the 13
 # published 2.5.0 tarballs so their contents can be compared with the reviewed candidate.
-# Read-only: contents: read, packages: read. Uploads the lockfile, tarballs and digests as an
-# artifact; publishes, pushes and writes nothing.
+# Read-only: contents: read, packages: read. Prints the lockfile diff, tarballs and digests to
+# the log; publishes, pushes and writes nothing.
 name: TEMP regenerate lockfile against GitHub Packages
 
 on:
@@ -39,6 +39,7 @@ jobs:
           echo "127.0.0.1 references: $(grep -c 127.0.0.1 pnpm-lock.yaml || true)"
           mkdir -p out/tarballs
           cp pnpm-lock.yaml out/
+
       - name: Download the 13 published 2.5.0 tarballs and their registry metadata
         env:
           NODE_AUTH_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
@@ -54,8 +55,12 @@ jobs:
           sha512sum *.tgz > ../SHA512SUMS.txt
           node ../../.github/tmp-regen/content-digest.mjs *.tgz > ../CONTENT-DIGESTS.txt
           cat ../CONTENT-DIGESTS.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: regen-output
-          path: out/
-          retention-days: 7
+      # Artifact downloads are not reachable from the review session, so the evidence goes to the
+      # log: the lockfile diff, registry metadata and the 13 tarballs, base64 with a SHA-256 each.
+      - name: Print the evidence
+        run: |
+          set -euo pipefail
+          emit() { echo "BEGIN $1 sha256=$(sha256sum "$2" | cut -d' ' -f1)"; base64 -w0 "$2"; echo; echo "END $1"; }
+          git diff pnpm-lock.yaml > out/lockfile.diff
+          emit lockfile.diff out/lockfile.diff
+          for f in out/*.json out/*.txt out/tarballs/*.tgz; do emit "$(basename "$f")" "$f"; done
