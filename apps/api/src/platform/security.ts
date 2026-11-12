@@ -37,6 +37,7 @@ import { emailTransportFor } from '../delivery/email.js';
 import { PasswordChange, createChangeLimiter } from '../password/password-change.js';
 import { PasswordRecovery, createResetLimiter } from '../password/password-recovery.js';
 import { createIntrospectionLimiter, isIntrospection } from '../auth/token-introspection.js';
+import { AuthEdgeLimiter, type AuthEdgePolicy } from '../security/auth-edge-limits.js';
 import { openCache, type CacheHandle } from './cache.js';
 import { RoleAdministration } from './role-administration.js';
 import { loadSigningKey, type SigningKey } from './signing.js';
@@ -76,6 +77,8 @@ export interface SecurityStack {
   readonly rateLimiter: RateLimiter;
   /** The per-account limit on `GET /api/auth/introspect`; see `INTROSPECTION_RULES`. */
   readonly introspectionLimiter: RateLimiter;
+  /** Sign-in, password-reset and MFA limits at the edge (`security/auth-edge-limits.ts`). */
+  readonly authEdgeLimiter: AuthEdgeLimiter;
   readonly tenants: TenantDirectory;
   readonly signing: SigningKey;
   readonly cacheKind: 'redis' | 'memory';
@@ -286,7 +289,7 @@ export const buildSecurityStack = async (
       await revocation.revokeAllForUser(tenantId, userId, 'password-reset');
     },
     // Its own limiter, so its rules and its fail-closed handling are its own. Same shared cache.
-    limiter: createResetLimiter(cache),
+    limiter: createResetLimiter(cache, environment.PASSWORD_RESET_REQUESTS_PER_IP),
     audit,
     transport: emailTransportFor(environment),
     enabled: environment.IDENTITY_PASSWORD_RESET === 'enabled',
@@ -356,6 +359,7 @@ export const buildSecurityStack = async (
     audit,
     rateLimiter: new RateLimiter({ cache, rules: edgeRules() }),
     introspectionLimiter: createIntrospectionLimiter(cache),
+    authEdgeLimiter: new AuthEdgeLimiter(cache, authEdgePolicyOf(environment)),
     tenants: new TenantDirectory(prisma),
     signing,
     cacheKind: handle.kind,
@@ -385,15 +389,22 @@ export const buildSecurityStack = async (
 };
 
 /**
- * Platform's baseline edge rules, with introspection given its own address limit.
+ * The general edge rules: Platform's baseline API limits, with introspection given its own address
+ * limit.
  *
  * `api-per-ip` (300 a minute) is right for a browser and wrong for a product backend: every Work
  * task behind one NAT address shares the key, so about 25 live users would exhaust it and every
  * Work request would then be refused. Introspection is carved out of it and gets `introspect-per-ip`
  * instead, sized for a product's whole egress; one account is contained by `INTROSPECTION_RULES`.
+ *
+ * Platform's baseline credential rules (`login-*`, `password-reset-per-ip`, `mfa-verify-per-session`)
+ * are left out on purpose: in the published 2.4.1 they are adaptive, and an adaptive rule there
+ * restarts its count after each refusal, and they admit on a store failure. Identity's own
+ * credential limits, which have neither defect, are `AuthEdgeLimiter` (`security/auth-edge-limits.ts`).
  */
 export const edgeRules = (): RateLimitRule[] =>
   BASELINE_RATE_LIMIT_RULES.flatMap((rule): RateLimitRule[] => {
+    if (!GENERAL_RULES.has(rule.id)) return [];
     if (rule.id !== 'api-per-ip') return [rule];
     const { match } = rule;
     return [
@@ -407,3 +418,13 @@ export const edgeRules = (): RateLimitRule[] =>
       },
     ];
   });
+
+const GENERAL_RULES: ReadonlySet<string> = new Set(['api-per-user', 'api-per-ip']);
+
+const authEdgePolicyOf = (environment: IdentityEnvironment): AuthEdgePolicy => ({
+  loginPerIp: environment.EDGE_LOGIN_PER_IP_LIMIT,
+  loginPerIdentifier: environment.EDGE_LOGIN_PER_IDENTIFIER_LIMIT,
+  passwordResetPerIp: environment.EDGE_PASSWORD_RESET_PER_IP_LIMIT,
+  mfaPerIp: environment.EDGE_MFA_PER_IP_LIMIT,
+  mfaPerSession: environment.EDGE_MFA_PER_SESSION_LIMIT,
+});

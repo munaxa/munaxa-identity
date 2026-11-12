@@ -55,7 +55,9 @@ export const PASSWORD_CHANGE_RULES = [
     dimension: 'user' as const,
     limit: 5,
     window: 15 * 60 * 1_000,
-    adaptiveFactor: 2,
+    // Not adaptive: in the published Platform limiter (2.4.1) an adaptive rule counts in its
+    // penalty window, whose different length is a different counter, so the count restarted after
+    // each refusal and five guesses became many. A plain window keeps one counter, refusals included.
   },
 ];
 

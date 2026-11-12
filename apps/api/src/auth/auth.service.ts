@@ -145,9 +145,13 @@ export class AuthService {
       return { ok: false, failure: { kind: 'unknown-organisation' } };
     }
 
+    // Trimmed here, because the directory finds the account by the trimmed, lowercased identifier
+    // while Platform 2.4.1 keys the lockout by the lowercased one only: `" victim@x"` found the same
+    // account under a fresh lockout counter, so every respelling handed back a full set of guesses.
+    const identifier = request.identifier.trim();
     let outcome;
     try {
-      outcome = await this.security.login.authenticate(request.identifier, request.password, {
+      outcome = await this.security.login.authenticate(identifier, request.password, {
         tenantId,
         correlationId: request.correlationId,
         ...(request.ipAddress === undefined ? {} : { ipAddress: request.ipAddress }),

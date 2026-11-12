@@ -217,6 +217,28 @@ export const IDENTITY_SCHEMA = extendConfig(
      */
     IDENTITY_SESSION_LIST_IP: oneOf(['hidden', 'prefix'] as const, { default: 'prefix' }),
 
+    /**
+     * Edge limits on the credential routes (`apps/api/src/security/auth-edge-limits.ts`).
+     *
+     * The per-address limits are shared by everybody behind one public address — a school, an
+     * office, a mobile carrier — so they are sized for a population and the per-account controls
+     * (`EDGE_LOGIN_PER_IDENTIFIER_LIMIT`, `LOGIN_MAX_ATTEMPTS`) are what stop guessing at one
+     * account. The defaults are provisional: no production traffic exists yet to size them from.
+     * Each has a floor so a typo cannot lock a whole school out. See docs/rate-limits.md.
+     */
+    /** Sign-in posts per client address per 5 minutes. */
+    EDGE_LOGIN_PER_IP_LIMIT: integer({ default: 300, min: 30, max: 100_000 }),
+    /** Sign-in posts per typed identifier (trimmed, lowercased), any address, per 15 minutes. */
+    EDGE_LOGIN_PER_IDENTIFIER_LIMIT: integer({ default: 20, min: 10, max: 200 }),
+    /** Password-reset request and completion posts per client address per hour. */
+    EDGE_PASSWORD_RESET_PER_IP_LIMIT: integer({ default: 60, min: 10, max: 10_000 }),
+    /** Second-factor and reauthentication posts per client address per 15 minutes. */
+    EDGE_MFA_PER_IP_LIMIT: integer({ default: 300, min: 30, max: 100_000 }),
+    /** Second-factor and reauthentication posts per challenge or session per 15 minutes. */
+    EDGE_MFA_PER_SESSION_LIMIT: integer({ default: 10, min: 5, max: 100 }),
+    /** Reset-link requests per client address per hour, in the recovery service itself. */
+    PASSWORD_RESET_REQUESTS_PER_IP: integer({ default: 30, min: 5, max: 10_000 }),
+
     /** Password recovery and email delivery; see `password-recovery.ts`. */
     ...PASSWORD_RECOVERY_FIELDS,
   },
