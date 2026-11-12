@@ -109,13 +109,16 @@ export const openCache = async (
   // seconds, which every consumer already treats as unavailable: sign-in, reset and MFA refuse,
   // the credential-route edge limits refuse with 503. Without it a hang holds each request open.
   // Production's URL rules (rediss:// for a network host, a password) are in @identity/config.
-  const client = new Redis(redisUrl, redisClientOptions(redisUrl, testing));
+  const url = redisUrl.trim();
+  const client = new Redis(url, redisClientOptions(url, testing));
   await client.connect();
 
   return {
     cache: new RedisCache(client as unknown as RedisLike, { keyPrefix: 'identity:' }),
     kind: 'redis',
     // A replica answers PING too, and refuses every write: reachable means connected to a primary.
+    // ROLE is in Valkey's @admin/@dangerous categories: an ElastiCache RBAC access string without
+    // them would keep readiness false (closed), see docs/production-readiness.md.
     reachable: async () => {
       try {
         const role = (await client.call('ROLE')) as unknown;

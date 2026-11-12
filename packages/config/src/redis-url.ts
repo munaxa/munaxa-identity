@@ -35,10 +35,13 @@ export const isLoopbackHost = (hostname: string): boolean => {
 export const redactRedisUrl = (value: string): string => {
   try {
     const parsed = new URL(value.trim());
-    if (parsed.username === '' && parsed.password === '') return parsed.toString();
+    const hadUserinfo = parsed.username !== '' || parsed.password !== '';
     parsed.username = '';
     parsed.password = '';
-    return parsed.toString().replace('://', '://[redacted]@');
+    parsed.search = '';
+    parsed.hash = '';
+    const shown = parsed.toString();
+    return hadUserinfo ? shown.replace('://', '://[redacted]@') : shown;
   } catch {
     return '[redacted: not a valid URL]';
   }

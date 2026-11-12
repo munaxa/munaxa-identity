@@ -543,5 +543,8 @@ describe('REDIS_URL in production (shared cache over TLS, or the loopback sideca
     expect(shown).toMatch(/^rediss:\/\/\[redacted\]@/);
     expect(redactRedisUrl('not a url')).toBe('[redacted: not a valid URL]');
     expect(redactRedisUrl('redis://localhost:6379')).toBe('redis://localhost:6379');
+    expect(redactRedisUrl(`redis://localhost:6379?password=${CACHE_PASSWORD}`)).toBe(
+      'redis://localhost:6379',
+    );
   });
 });
