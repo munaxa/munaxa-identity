@@ -82,6 +82,13 @@ docker run --rm \
 docker run --rm -v "$DB_CACHE:/db" -e GRYPE_DB_CACHE_DIR=/db "$GRYPE_IMAGE" db status 2>/dev/null \
   | sed 's/^/grype db: /' || true
 
+# HIGH and CRITICAL with the file each was found in, so a finding can be traced to its source.
+if command -v jq >/dev/null 2>&1; then
+  jq -r '.matches[] | select(.vulnerability.severity == "High" or .vulnerability.severity == "Critical")
+    | "\(.vulnerability.severity)\t\(.artifact.name)@\(.artifact.version)\t\(.vulnerability.id)\tfix \((.vulnerability.fix.versions // []) | join(","))\t\(.artifact.locations[0].path // "-")"' \
+    "$OUT/$NAME.grype.json" | sort -u | sed "s/^/$NAME: /" || true
+fi
+
 case "$status" in
   0) echo "$REF ($NAME): no finding of severity $FAIL_ON or above" ;;
   *) fail "findings of severity $FAIL_ON or above (grype exit $status); see the table above and $OUT/$NAME.grype.json" ;;
