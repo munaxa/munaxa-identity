@@ -235,3 +235,23 @@ jobs:
           set -euo pipefail
           .github/scripts/verify-image.sh identity-runtime:ci runtime
           .github/scripts/verify-image.sh identity-migrate:ci migrate
+
+      # A vulnerability scan of both images (OS and npm packages), failing on HIGH or CRITICAL.
+      # This is CI's own scan; ECR's scan of a published digest is separate evidence.
+      - name: Scan both images (SBOM, HIGH and CRITICAL fail)
+        run: |
+          set -euo pipefail
+          status=0
+          for target in runtime migrate; do
+            .github/scripts/scan-image.sh "identity-$target:ci" "identity-$target" image-reports || status=1
+          done
+          exit $status
+
+      - name: Keep the SBOMs and scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-reports
+          path: image-reports/
+          if-no-files-found: warn
+          retention-days: 90

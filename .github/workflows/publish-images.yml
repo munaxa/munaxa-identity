@@ -58,6 +58,27 @@ jobs:
           # push, and nothing longer-lived should be used.
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Verified and scanned before anything is pushed: the same Dockerfile, built first into the
+      # local daemon. The push below reuses the build cache, so it publishes the same layers.
+      - name: Build, verify and scan before publishing
+        env:
+          NPM_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$NPM_TOKEN" ] || { echo "::error::PLATFORM_PACKAGES_TOKEN is not set"; exit 1; }
+          docker buildx build --secret id=npm_token,env=NPM_TOKEN -f apps/api/Dockerfile -t identity-runtime:gate --load .
+          .github/scripts/verify-image.sh identity-runtime:gate runtime
+          .github/scripts/scan-image.sh identity-runtime:gate identity-runtime image-reports
+
+      - name: Keep the SBOMs and scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-reports-ghcr
+          path: image-reports/
+          if-no-files-found: warn
+          retention-days: 400
+
       - name: Build and push
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
