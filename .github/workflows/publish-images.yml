@@ -70,6 +70,15 @@ jobs:
           .github/scripts/verify-image.sh identity-runtime:gate runtime
           .github/scripts/scan-image.sh identity-runtime:gate identity-runtime image-reports
 
+      - name: Keep the SBOMs and scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-reports-ghcr
+          path: image-reports/
+          if-no-files-found: warn
+          retention-days: 400
+
       - name: Build and push
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
