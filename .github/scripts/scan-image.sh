@@ -37,6 +37,7 @@ mkdir -p "$DB_CACHE"
 
 # Every exception names its approval and expires.
 config_args=()
+grype_args=()
 if [ -f "$CONFIG" ]; then
   today="$(date -u +%F)"
   prev=""
@@ -44,6 +45,9 @@ if [ -f "$CONFIG" ]; then
     if printf '%s\n' "$line" | grep -qE '^[[:space:]]*-[[:space:]]*vulnerability:'; then
       printf '%s\n' "$prev" | grep -qE '^[[:space:]]*# exception: [A-Z]+-[0-9]+-[0-9A-Za-z-]+ owner=[^ ]+ expires=[0-9]{4}-[0-9]{2}-[0-9]{2} reason=.+' \
         || fail "$CONFIG: '$line' has no '# exception: <id> owner= expires= reason=' line above it"
+      if printf '%s\n' "$prev" | grep -qiE ' owner=(pending|tbd|none)( |$)'; then
+        fail "$CONFIG: exception has no owner approval yet: $prev"
+      fi
       expires="$(printf '%s\n' "$prev" | sed -nE 's/.* expires=([0-9]{4}-[0-9]{2}-[0-9]{2}) .*/\1/p')"
       [[ "$expires" > "$today" || "$expires" == "$today" ]] || fail "$CONFIG: exception expired on $expires: $prev"
     fi
@@ -52,7 +56,8 @@ if [ -f "$CONFIG" ]; then
   if grep -qE '^[[:space:]]*(-[[:space:]]*)?(fix-state|namespace|vex-status|match-type):|^(only-fixed|only-notfixed|fail-on-severity|exclude|ignore-wontfix):' "$CONFIG"; then
     fail "$CONFIG: an exception may name a vulnerability (and package), never a class of findings"
   fi
-  config_args=(-v "$PWD/$CONFIG:/grype.yaml:ro" -e GRYPE_CONFIG=/grype.yaml)
+  config_args=(-v "$PWD/$CONFIG:/grype.yaml:ro")
+  grype_args=(-c /grype.yaml)
 fi
 
 echo "--- SBOM of $REF ($NAME)"
@@ -70,7 +75,7 @@ docker run --rm \
   -e GRYPE_DB_CACHE_DIR=/db -e GRYPE_DB_AUTO_UPDATE=true -e GRYPE_DB_VALIDATE_AGE=true \
   "${config_args[@]}" \
   "$GRYPE_IMAGE" "sbom:/out/$NAME.syft.json" \
-  -o table -o "json=/out/$NAME.grype.json" --fail-on "$FAIL_ON" || status=$?
+  "${grype_args[@]}" -o table -o "json=/out/$NAME.grype.json" --fail-on "$FAIL_ON" || status=$?
 
 [ -s "$OUT/$NAME.grype.json" ] || fail "grype wrote no report (exit $status)"
 # The database the result came from, so the evidence says when it was true.
