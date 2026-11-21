@@ -22,6 +22,19 @@ jobs:
           done
           docker run --rm alpine:edge sh -c 'apk update >/dev/null; apk search -x -v libssl3 libcrypto3 openssl'
           docker run --rm alpine:3.23 sh -c 'echo https://dl-cdn.alpinelinux.org/alpine/edge/main >> /etc/apk/repositories; apk update >/dev/null; apk policy libssl3'
+      - name: Alternative bases (round 2)
+        run: |
+          G=anchore/grype:v0.121.2@sha256:6a36234da13f9faa327306ac0b3dab3405cfa2b4eb20c8f904125a8707863913
+          curl -sSfL https://openssl-library.org/news/secadv/20261117.txt | head -150 || true
+          for t in cgr.dev/chainguard/wolfi-base:latest node:22-trixie-slim node:22-bookworm-slim gcr.io/distroless/nodejs22-debian13:nonroot gcr.io/distroless/nodejs22-debian12:nonroot; do
+            docker pull -q "$t" >/dev/null 2>&1 || { echo "== $t PULL FAILED"; continue; }
+            echo "== $t $(docker inspect --format '{{index .RepoDigests 0}}' "$t")"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$G" "$t" -o json 2>/dev/null > /tmp/alt.json || true
+            jq -r '[.matches[]|select(.vulnerability.severity=="High" or .vulnerability.severity=="Critical")|.artifact.name+" "+.artifact.version+" "+.vulnerability.id+" "+.vulnerability.severity+" fix="+(.vulnerability.fix.versions|join(","))]|unique|.[]' /tmp/alt.json
+            jq -r '[.matches[]|.vulnerability.severity]|group_by(.)|map(.[0]+"="+(length|tostring))|join(" ")' /tmp/alt.json
+            jq -r '.source.target.userInput // empty' /tmp/alt.json >/dev/null
+          done
+          docker run --rm cgr.dev/chainguard/wolfi-base:latest sh -c 'apk update >/dev/null 2>&1; apk policy libssl3 libcrypto3 openssl nodejs-22 2>/dev/null | head -30' || true
       - name: Grype view of the OpenSSL advisories
         run: |
           G=anchore/grype:v0.121.2@sha256:6a36234da13f9faa327306ac0b3dab3405cfa2b4eb20c8f904125a8707863913
