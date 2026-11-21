@@ -36,6 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           # The commit to build, deliberately not tied to where this workflow file lives: `.github/`
           # and `deploy/` are both outside the runtime image, so a commit that only touches them
           # produces a byte-identical image to the commit it sits on top of.
@@ -72,7 +73,7 @@ jobs:
 
       - name: Keep the SBOMs and scan reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: image-reports-ghcr
           path: image-reports/
