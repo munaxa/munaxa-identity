@@ -1,0 +1,44 @@
+# TEMPORARY diagnostic (D-SSL, 21 Nov 2026). Read-only: pulls public images, queries Alpine's
+# package index and the Grype database. Builds and pushes nothing, uses no secret.
+# The PR that carries this file is closed unmerged once the evidence is recorded.
+name: openssl-probe
+on:
+  pull_request:
+    paths: ['.github/workflows/openssl-probe.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Alpine package index (pinned base, current 3.22/3.23 and edge)
+        run: |
+          set -x
+          PIN=node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+          docker run --rm "$PIN" sh -c 'cat /etc/alpine-release; apk info -v 2>/dev/null | grep -E "^(libssl3|libcrypto3|zlib|musl)-"; apk update >/dev/null; apk policy libssl3 libcrypto3 openssl'
+          for t in node:22-alpine node:22-alpine3.23 node:24-alpine alpine:3.23 alpine:3.22 alpine:edge; do
+            docker pull -q "$t" >/dev/null && echo "== $t $(docker inspect --format '{{index .RepoDigests 0}}' "$t")" && \
+            docker run --rm "$t" sh -c 'cat /etc/alpine-release; apk info -v 2>/dev/null | grep -E "^(libssl3|libcrypto3|zlib)-"; apk update >/dev/null; apk policy libssl3 libcrypto3' || true
+          done
+          docker run --rm alpine:edge sh -c 'apk update >/dev/null; apk search -x -v libssl3 libcrypto3 openssl'
+          docker run --rm alpine:3.23 sh -c 'echo https://dl-cdn.alpinelinux.org/alpine/edge/main >> /etc/apk/repositories; apk update >/dev/null; apk policy libssl3'
+      - name: Grype view of the OpenSSL advisories
+        run: |
+          G=anchore/grype:v0.121.2@sha256:6a36234da13f9faa327306ac0b3dab3405cfa2b4eb20c8f904125a8707863913
+          mkdir -p /tmp/db
+          docker run --rm -v /tmp/db:/db -e GRYPE_DB_CACHE_DIR=/db "$G" db status || true
+          for img in node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a alpine:3.23 alpine:edge; do
+            echo "== grype $img"
+            docker run --rm -v /tmp/db:/db -e GRYPE_DB_CACHE_DIR=/db -v /var/run/docker.sock:/var/run/docker.sock "$G" "$img" --only-fixed=false -o table 2>/dev/null | grep -Ei 'NAME|ssl|crypto' || true
+          done
+          printf 'FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a\nRUN apk add --no-cache zlib=1.4-r0 libssl3=3.5.9-r1 libcrypto3=3.5.9-r1\n' > /tmp/Dockerfile.cur
+          docker build -q -t probe:cur -f /tmp/Dockerfile.cur /tmp
+          echo "== grype current pin (3.5.9-r1)"
+          docker run --rm -v /tmp/db:/db -e GRYPE_DB_CACHE_DIR=/db -v /var/run/docker.sock:/var/run/docker.sock "$G" probe:cur -o json > /tmp/cur.json || true
+          jq -r '.matches[] | select(.artifact.name|test("ssl|crypto")) | [.vulnerability.id,.vulnerability.severity,.artifact.name,.artifact.version,(.vulnerability.fix.state),(.vulnerability.fix.versions|join(","))] | @tsv' /tmp/cur.json | sort -u
+          jq -r '.matches[] | select(.artifact.name|test("ssl|crypto")) | .vulnerability | [.id, (.urls // [] | join(" ")), (.description // "" | .[0:300])] | @tsv' /tmp/cur.json | sort -u
+          printf 'FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a\nRUN apk upgrade --no-cache libssl3 libcrypto3 zlib && apk info -v | grep -E "^(libssl3|libcrypto3|zlib)-"\n' > /tmp/Dockerfile.up
+          docker build --progress=plain -t probe:up -f /tmp/Dockerfile.up /tmp 2>&1 | tail -8
+          echo "== grype after apk upgrade within the pinned base's branch"
+          docker run --rm -v /tmp/db:/db -e GRYPE_DB_CACHE_DIR=/db -v /var/run/docker.sock:/var/run/docker.sock "$G" probe:up -o json > /tmp/up.json || true
+          jq -r '.matches[] | [.vulnerability.id,.vulnerability.severity,.artifact.name,.artifact.version,(.vulnerability.fix.state),(.vulnerability.fix.versions|join(","))] | @tsv' /tmp/up.json | sort -u
