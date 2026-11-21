@@ -143,9 +143,13 @@ it); the application role cannot create organisations or system roles.
 - **MFA.** In release `5277d71` `mfaSatisfied` is always false, so Control runs with
   `OPERATOR_REQUIRE_MFA=false`. Later images issue `mfa: true` after a TOTP or recovery-code
   challenge (`docs/runbooks/mfa.md`); whether Control then requires it is Control's setting.
-  The operator host sits behind Cloudflare Access with an MFA Require rule (munaxa-platform
-  `infra/aws/cloudflare-access.md`), Control verifies the Access token, and
-  `OPERATOR_SUBJECT_ALLOWLIST` is mandatory until MFA exists. `operator_cidrs` is empty.
+  Since 21 Nov 2026 operator access is AWS-native (munaxa-platform `infra/aws/OPERATOR-ACCESS.md`):
+  Cloudflare Access is optional and not used by the Testing deployment. Without it, the operator
+  host is forwarded only from the operator's source ranges at the ALB, Control requires
+  `OPERATOR_REQUIRE_MFA=true` and `OPERATOR_SUBJECT_ALLOWLIST`, and Terraform requires this service's
+  `identity_security_config.mfa_policy` to be `privileged` (listing the Control operator role) or
+  `all`, so the operator is challenged for TOTP here. AWS IAM Identity Center is for AWS access
+  only and never signs anyone in to Munaxa.
 
 ## Checked locally (PostgreSQL 16, Docker)
 
