@@ -27,9 +27,12 @@ FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d
 # (aports 3.24-stable main/openssl/APKBUILD secfixes). Exact versions; the loop fails the build if
 # Alpine replaces any of them.
 # The split is the point: `apk list -I <name>` prints `<name>-<version> <arch> ...` and $1 is the first word.
+# D-SSL (OpenSSL advisory of 17 Nov 2026): libssl3/libcrypto3 3.5.10-r0, the Alpine package of OpenSSL
+# 3.5.10, which fixes CVE-2026-124709, CVE-2026-107494, CVE-2026-121482, CVE-2026-84786 and
+# CVE-2026-107493 (5 HIGH per Grype in 3.5.9-r1). Report 2026-11-21-deployment-acceleration-sprint.
 # hadolint ignore=SC2046
-RUN apk add --no-cache 'zlib=1.4-r0' 'libssl3=3.5.9-r1' 'libcrypto3=3.5.9-r1' && \
-    for want in zlib=1.4-r0 libssl3=3.5.9-r1 libcrypto3=3.5.9-r1; do \
+RUN apk add --no-cache 'zlib=1.4-r0' 'libssl3=3.5.10-r0' 'libcrypto3=3.5.10-r0' && \
+    for want in zlib=1.4-r0 libssl3=3.5.10-r0 libcrypto3=3.5.10-r0; do \
       name="${want%%=*}" && set -- $(apk list -I "$name" 2>/dev/null) && installed="${1#"$name"-}" && \
       if [ "$installed" != "${want#*=}" ]; then \
         echo "$name is '$installed', expected ${want#*=}" >&2; exit 1; \
