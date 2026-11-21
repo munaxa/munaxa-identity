@@ -28,6 +28,9 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read # @munaxa/* from GitHub Packages, with this run's own token
 
     services:
       postgres:
@@ -65,7 +68,7 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Format
         run: pnpm format:check
@@ -183,7 +186,7 @@ jobs:
       - name: Audit dependencies
         run: pnpm audit --audit-level high
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Both images, built the way publish-images-ecr.yml builds them, and checked the way it checks
   # them, so a Dockerfile change is proven on the pull request rather than at release time. Nothing
@@ -193,6 +196,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: read # @munaxa/* inside the image build, with this run's own token
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -228,7 +232,7 @@ jobs:
 
       - name: Build runtime and migrate
         env:
-          NPM_TOKEN: ${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           for target in runtime migrate; do
