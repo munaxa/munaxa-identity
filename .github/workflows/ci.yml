@@ -244,12 +244,22 @@ jobs:
 
       # A vulnerability scan of both images (OS and npm packages), failing on HIGH or CRITICAL.
       # This is CI's own scan; ECR's scan of a published digest is separate evidence.
-      - name: Scan both images (SBOM, HIGH and CRITICAL fail)
+      # The permanent gate is unchanged and runs first (verify-permanent-gate.py proves it). Only when
+      # it fails does scan-image-testing.sh check the TEMPORARY Testing-only D-SSL exception (owner
+      # decision 22 Nov 2026, expires 2026-12-01T00:00:00Z): every HIGH/CRITICAL finding must be one of
+      # the listed OpenSSL 3.5.9-r1 findings, or the job fails. docs/security/dssl-temporary-exception.md
+      - name: Verify the permanent vulnerability gate and test the D-SSL exception
+        run: |
+          set -euo pipefail
+          python3 -I .github/scripts/verify-permanent-gate.py .
+          python3 -I -m unittest discover -s .github/scripts -p 'test_scan_exception.py'
+
+      - name: Scan both images (SBOM, HIGH and CRITICAL fail; D-SSL Testing exception only)
         run: |
           set -euo pipefail
           status=0
           for target in runtime migrate; do
-            .github/scripts/scan-image.sh "identity-$target:ci" "identity-$target" image-reports || status=1
+            .github/scripts/scan-image-testing.sh "identity-$target:ci" "identity-$target" image-reports testing || status=1
           done
           exit $status
 

@@ -1,0 +1,71 @@
+{
+  "schema": "munaxa-scan-exception/v1",
+  "id": "D-SSL-2026-11",
+  "decision": "Owner decision D-SSL, Tamer, 22 Nov 2026 14:07 UTC: temporary acceptance of the OpenSSL 3.5.9-r1 HIGH findings for the first Munaxa Docs Testing deployment and its required dependencies only; never production; OpenSSL 3.5.10 remains the required remediation (target 1 Dec 2026).",
+  "environment": "testing",
+  "expires_utc": "2026-12-01T00:00:00Z",
+  "workflows": [".github/workflows/ci.yml", ".github/workflows/publish-images-ecr.yml"],
+  "images": ["identity-runtime", "identity-migrate"],
+  "findings": [
+    {
+      "vulnerability": "CVE-2026-107493",
+      "package": "libcrypto3",
+      "version": "3.5.9-r1",
+      "type": "apk"
+    },
+    {
+      "vulnerability": "CVE-2026-107493",
+      "package": "libssl3",
+      "version": "3.5.9-r1",
+      "type": "apk"
+    },
+    {
+      "vulnerability": "CVE-2026-107494",
+      "package": "libcrypto3",
+      "version": "3.5.9-r1",
+      "type": "apk"
+    },
+    {
+      "vulnerability": "CVE-2026-107494",
+      "package": "libssl3",
+      "version": "3.5.9-r1",
+      "type": "apk"
+    },
+    {
+      "vulnerability": "CVE-2026-121482",
+      "package": "libcrypto3",
+      "version": "3.5.9-r1",
+      "type": "apk"
+    },
+    {
+      "vulnerability": "CVE-2026-121482",
+      "package": "libssl3",
+      "version": "3.5.9-r1",
+      "type": "apk"
+    },
+    {
+      "vulnerability": "CVE-2026-124709",
+      "package": "libcrypto3",
+      "version": "3.5.9-r1",
+      "type": "apk"
+    },
+    {
+      "vulnerability": "CVE-2026-124709",
+      "package": "libssl3",
+      "version": "3.5.9-r1",
+      "type": "apk"
+    },
+    {
+      "vulnerability": "CVE-2026-84786",
+      "package": "libcrypto3",
+      "version": "3.5.9-r1",
+      "type": "apk"
+    },
+    {
+      "vulnerability": "CVE-2026-84786",
+      "package": "libssl3",
+      "version": "3.5.9-r1",
+      "type": "apk"
+    }
+  ]
+}
