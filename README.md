@@ -48,9 +48,11 @@ employee) are seeded only on request and never in production. They are defined i
 them) and measured by `packages/testing/src/token-size.integration.test.ts`:
 
 ```bash
-pnpm db:seed-work-roles --organisation acme --testing-personas --environment testing
-# With NODE_ENV=production (as Testing runs) the script also needs
-# IDENTITY_BASE_URL=https://id.test.munaxa.com, and refuses any production Identity host.
+IDENTITY_BASE_URL=https://id.test.munaxa.com \
+  pnpm db:seed-work-roles --organisation acme --testing-personas --environment testing
+# Always needs IDENTITY_BASE_URL on a non-production host, whatever NODE_ENV says. Refuses, before
+# connecting, a production database host (munaxa-prod-*, *.prod.munaxa.internal) or a database
+# named for production. A tunnel to production through localhost is caught only by the first two.
 ```
 
 ## The API

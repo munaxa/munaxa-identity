@@ -26,7 +26,8 @@
  * The eight Testing persona roles (MW-003, keys `work-testing-*`) are provisioned only on request,
  * and only outside production:
  *
- *   DIRECT_DATABASE_URL=… node apps/api/scripts/seed-work-roles.mjs --organisation <slug> \
+ *   IDENTITY_BASE_URL=https://id.test.munaxa.com DIRECT_DATABASE_URL=… \
+ *     node apps/api/scripts/seed-work-roles.mjs --organisation <slug> \
  *     --testing-personas --environment testing
  *
  * See `testingPersonasRefusal` for exactly what is refused and why.
@@ -60,13 +61,18 @@ const fail = (message) => {
 
 const run = async () => {
   const withPersonas = flag('testing-personas');
+  const connection =
+    process.env.DIRECT_DATABASE_URL ??
+    process.env.DATABASE_MIGRATION_URL ??
+    process.env.TEST_DIRECT_DATABASE_URL;
 
   // Before anything connects: a refused run must not be able to write a single row.
   if (withPersonas) {
     const refusal = testingPersonasRefusal({
       environment: argument('environment'),
-      nodeEnv: process.env.NODE_ENV,
       baseUrl: process.env.IDENTITY_BASE_URL,
+      // The very connection string used below, so the check and the write cannot disagree.
+      databaseUrl: connection,
     });
     if (refusal !== undefined) fail(`Refused: ${refusal}`);
   }
@@ -77,10 +83,6 @@ const run = async () => {
       fail(`Role ${role.key} is misfiled: only Testing personas carry ${TESTING_PERSONA_PREFIX}.`);
   }
 
-  const connection =
-    process.env.DIRECT_DATABASE_URL ??
-    process.env.DATABASE_MIGRATION_URL ??
-    process.env.TEST_DIRECT_DATABASE_URL;
   const slug = (argument('organisation') ?? process.env.IDENTITY_DEFAULT_ORGANISATION ?? '').trim();
 
   if (!connection)

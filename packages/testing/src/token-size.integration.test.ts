@@ -158,9 +158,19 @@ const PAYROLL_DECISIONS = [
   'work:compensation:approve',
 ];
 
-/** Approves, finalizes or decides: the grants that must sit apart from what they decide on. */
+/**
+ * Approves, finalizes, decides or confirms: the grants that must sit apart from what they decide
+ * on. Written out here rather than imported, so the test does not take the definition's word for
+ * which grants are decisions.
+ */
 const isDecision = (grant: string): boolean =>
-  PAYROLL_DECISIONS.includes(grant) || /:(approve|finalize|decide)$/.test(grant);
+  PAYROLL_DECISIONS.includes(grant) || /:(approve|finalize|decide|confirm)$/.test(grant);
+
+/** A read, or a grant over the holder's own record: neither prepares anything somebody decides. */
+const isReadOrOwn = (grant: string): boolean =>
+  /:read(-[a-z-]+)?$/.test(grant) || grant.endsWith('-own');
+
+const moduleOf = (grant: string): string => grant.split(':')[1] ?? '';
 
 const PAYROLL_PREPARATION = [
   'work:payroll:manage',
@@ -228,14 +238,27 @@ describe('the Testing personas', () => {
     }
   });
 
-  it('hold every decision only in an approver persona', () => {
+  it('never hold a decision beside anything else in its module but reads and own records', () => {
+    // One rule for every persona, with no persona exempt by name: whoever decides in a module
+    // prepares nothing there, so nobody can decide what they prepared.
     for (const role of personas) {
-      const decisions = role.grants.filter(isDecision);
-      const approver =
-        role.key === 'work-testing-payroll-approver' || role.key === 'work-testing-manager';
+      const deciding = new Set(role.grants.filter(isDecision).map(moduleOf));
+      const besideADecision = role.grants.filter(
+        (grant) => deciding.has(moduleOf(grant)) && !isDecision(grant) && !isReadOrOwn(grant),
+      );
 
-      expect([role.key, approver || decisions.length === 0]).toEqual([role.key, true]);
+      expect([role.key, besideADecision]).toEqual([role.key, []]);
     }
+  });
+
+  it('keep career nominations and recommendations apart from confirming and deciding them', () => {
+    const holders = (grant: string): string[] =>
+      personas.filter((role) => role.grants.includes(grant)).map((role) => role.key);
+
+    expect(holders('work:career:successor:nominate')).toEqual(['work-testing-manager']);
+    expect(holders('work:career:mobility:recommend')).toEqual(['work-testing-manager']);
+    expect(holders('work:career:successor:confirm')).toEqual(['work-testing-hr-officer']);
+    expect(holders('work:career:mobility:decide')).toEqual(['work-testing-hr-officer']);
   });
 });
 
@@ -247,24 +270,89 @@ describe('the seed script, asked for the Testing personas', () => {
       env: { PATH: process.env['PATH'] ?? '', ...env },
     });
 
+  const TESTING = { IDENTITY_BASE_URL: 'https://id.test.munaxa.com' };
+  const PERSONAS = ['--testing-personas', '--environment', 'testing'];
+
   it.each([
-    ['no environment named', ['--testing-personas'], { NODE_ENV: 'development' }],
-    ['production named', ['--testing-personas', '--environment', 'production'], {}],
+    ['no environment named', ['--testing-personas'], { ...TESTING, NODE_ENV: 'development' }],
+    ['production named', ['--testing-personas', '--environment', 'production'], TESTING],
     [
       'production mode with no base URL to confirm the target',
-      ['--testing-personas', '--environment', 'testing'],
+      PERSONAS,
       { NODE_ENV: 'production' },
     ],
+    // M1: no NODE_ENV at all is not permission to skip the issuer check.
+    ['no NODE_ENV and no base URL', PERSONAS, {}],
     [
       'a production Identity host',
-      ['--testing-personas', '--environment', 'testing'],
+      PERSONAS,
       { NODE_ENV: 'production', IDENTITY_BASE_URL: 'https://id.munaxa.com' },
+    ],
+    [
+      "production's RDS instance, with no NODE_ENV",
+      PERSONAS,
+      {
+        ...TESTING,
+        DIRECT_DATABASE_URL:
+          'postgresql://owner:placeholder@munaxa-prod-pg.abc123.eu-central-1.rds.amazonaws.com:5432/identity',
+      },
+    ],
+    [
+      "production's private namespace",
+      PERSONAS,
+      {
+        ...TESTING,
+        DATABASE_MIGRATION_URL:
+          'postgresql://owner:placeholder@db.prod.munaxa.internal:5432/identity',
+      },
+    ],
+    [
+      'a database named for production',
+      PERSONAS,
+      {
+        ...TESTING,
+        DIRECT_DATABASE_URL: 'postgresql://owner:placeholder@localhost:5432/identity_prod',
+      },
+    ],
+    [
+      'a database URL that cannot be read',
+      PERSONAS,
+      { ...TESTING, DIRECT_DATABASE_URL: 'not a url' },
     ],
   ])('refuses with %s', (_case, args, env) => {
     const result = seed(['--organisation', 'acme', ...args], env);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Refused:');
+  });
+
+  it('accepts the non-production database names the platform uses', () => {
+    const refusal = (databaseUrl: string): string =>
+      execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `import { testingPersonasRefusal } from ${JSON.stringify(script('work-roles.mjs'))};
+           process.stdout.write(String(testingPersonasRefusal(JSON.parse(process.argv[1]))));`,
+          JSON.stringify({
+            environment: 'testing',
+            baseUrl: 'https://id.test.munaxa.com',
+            databaseUrl,
+          }),
+        ],
+        { encoding: 'utf8' },
+      );
+
+    expect(
+      refusal(
+        'postgresql://owner:placeholder@munaxa-nonprod-pg.abc123.eu-central-1.rds.amazonaws.com:5432/identity',
+      ),
+    ).toBe('undefined');
+    expect(
+      refusal('postgresql://owner:placeholder@db.nonprod.munaxa.internal:5432/identity_nonprod'),
+    ).toBe('undefined');
+    expect(refusal('postgresql://owner:placeholder@localhost:5432/identity')).toBe('undefined');
   });
 
   it('passes the guard for the Testing Identity, and only then asks for a database', () => {

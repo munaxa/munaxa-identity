@@ -29,11 +29,15 @@ export const workCatalogue = () => JSON.parse(readFileSync(CATALOGUE_PATH, 'utf8
  * The decisions: every grant that approves, finalizes, pays out, reverses or decides something
  * another person prepared.
  *
- * Segregation of duties for Testing is defined over this list. A decision is held only by one of
- * the two approver personas, and never by a role holding the grants that prepare what it decides:
+ * Segregation of duties for Testing is defined over this list, the same rule for every persona:
+ * a role holding a decision in a module holds nothing else in that module but reads and grants over
+ * the holder's own record. So nobody decides what they prepared:
  *
  *   - payroll and compensation decisions belong to the payroll approver, and the payroll preparer
  *     holds none of them;
+ *   - the career decisions (confirming a successor, deciding a mobility recommendation) belong to
+ *     the HR records officer, and the manager, who nominates and recommends, holds neither — the
+ *     career module separates the two acts and nothing in it refuses a self-decision;
  *   - every other decision belongs to the approver (manager), who prepares none of the records
  *     those decisions are taken on.
  *
@@ -60,7 +64,10 @@ export const OTHER_DECISIONS = [
   'work:workflow:approval:decide',
 ];
 
-export const DECISIONS = [...PAYROLL_DECISIONS, ...OTHER_DECISIONS];
+/** Recording that the organisation agrees with a nomination or a recommendation the manager made. */
+export const CAREER_DECISIONS = ['work:career:mobility:decide', 'work:career:successor:confirm'];
+
+export const DECISIONS = [...PAYROLL_DECISIONS, ...CAREER_DECISIONS, ...OTHER_DECISIONS];
 
 /** The prefix that marks a role as provisioned for the Testing environment and nowhere else. */
 export const TESTING_PERSONA_PREFIX = 'work-testing-';
@@ -82,38 +89,72 @@ const isNonProductionHost = (host) =>
   host.endsWith('.example');
 
 /**
+ * A database host that is production's, by the names munaxa-platform gives it
+ * (`infra/aws/stack`): the RDS instance is `munaxa-<environment>-pg` (`data.tf`, prefix from
+ * `network.tf`), so production's endpoint starts `munaxa-prod-pg.`; and the private namespace is
+ * `<environment>.munaxa.internal` (`services.tf`). Anything under the `munaxa-prod` prefix counts.
+ */
+const isProductionDatabaseHost = (host) =>
+  host.split('.')[0].startsWith('munaxa-prod') ||
+  host === 'prod.munaxa.internal' ||
+  host.endsWith('.prod.munaxa.internal');
+
+/** A database name that says production: `prod` or `production` as a word of it. */
+const isProductionDatabaseName = (name) => /(^|[^a-z])prod(uction)?([^a-z]|$)/i.test(name);
+
+/** Why the database named by `databaseUrl` must not receive the personas, or `undefined`. */
+const databaseRefusal = (databaseUrl) => {
+  if (databaseUrl === undefined || databaseUrl.trim() === '') return undefined;
+  let url;
+  try {
+    url = new URL(databaseUrl);
+  } catch {
+    return 'The database URL is not a URL, so its target cannot be confirmed as non-production.';
+  }
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (isProductionDatabaseHost(host))
+    return `The database host ${host} is production's (munaxa-prod). Testing personas are refused there.`;
+  const name = decodeURIComponent(url.pathname.replace(/^\//, ''));
+  if (isProductionDatabaseName(name))
+    return `The database ${name} is named for production. Testing personas are refused there.`;
+  return undefined;
+};
+
+/**
  * Why the Testing personas must not be provisioned here, or `undefined` when they may be.
  *
- * `NODE_ENV` alone cannot answer it: Testing runs Identity with `NODE_ENV=production`, exactly as
- * production does. So three things are required, and each is checked rather than trusted:
+ * `NODE_ENV` cannot answer it: Testing runs Identity with `NODE_ENV=production`, exactly as
+ * production does, and an operator's shell may not set it at all. So each of these is required,
+ * whatever `NODE_ENV` says, and each is checked rather than trusted:
  *
  *   1. the operator names the environment (`--environment testing`, or another non-production
  *      name) — an explicit statement, never a default;
- *   2. when `NODE_ENV` is `production`, `IDENTITY_BASE_URL` must be set and must name a
- *      non-production host (`id.test.munaxa.com`): it is the token issuer, so it says which
- *      Identity these roles would sign into;
- *   3. whatever `NODE_ENV` says, an `IDENTITY_BASE_URL` naming a production host is refused.
+ *   2. `IDENTITY_BASE_URL` is set and names a non-production host (`id.test.munaxa.com`): it is the
+ *      token issuer, so it says which Identity these roles would sign into;
+ *   3. the database the script would write to (`databaseUrl`, the connection string it is about to
+ *      use) is not production's by host or by name.
+ *
+ * Checked before any connection. What it cannot see is a tunnel: a production database reached
+ * through `localhost` is caught only by 1 and 2, which is why neither is optional.
  */
-export const testingPersonasRefusal = ({ environment, nodeEnv, baseUrl }) => {
+export const testingPersonasRefusal = ({ environment, baseUrl, databaseUrl }) => {
   if (environment === undefined || environment.trim() === '')
     return 'Testing personas need --environment <name> (testing, staging, development or ci).';
   if (!NON_PRODUCTION_ENVIRONMENTS.includes(environment.trim().toLowerCase()))
     return `Testing personas are never provisioned in "${environment}". They are for Testing only.`;
 
+  if (baseUrl === undefined || baseUrl.trim() === '')
+    return 'Set IDENTITY_BASE_URL to the Testing Identity (https://id.test.munaxa.com) to confirm the target.';
   let host;
-  if (baseUrl !== undefined && baseUrl.trim() !== '') {
-    try {
-      host = new URL(baseUrl).hostname.toLowerCase().replace(/^\[|\]$/g, '');
-    } catch {
-      return 'IDENTITY_BASE_URL is not a URL, so the target Identity cannot be confirmed as non-production.';
-    }
-    if (!isNonProductionHost(host))
-      return `IDENTITY_BASE_URL names ${host}, a production host. Testing personas are refused there.`;
+  try {
+    host = new URL(baseUrl).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  } catch {
+    return 'IDENTITY_BASE_URL is not a URL, so the target Identity cannot be confirmed as non-production.';
   }
-  if (nodeEnv === 'production' && host === undefined)
-    return 'NODE_ENV is production: set IDENTITY_BASE_URL to the Testing Identity (id.test.munaxa.com) to confirm the target.';
+  if (!isNonProductionHost(host))
+    return `IDENTITY_BASE_URL names ${host}, not a non-production host. Testing personas are refused there.`;
 
-  return undefined;
+  return databaseRefusal(databaseUrl);
 };
 
 /**
@@ -215,8 +256,16 @@ export const workRoles = (catalogue = workCatalogue()) => {
       name: 'Munaxa Work - Testing only - HR records officer',
       description:
         'TESTING ONLY. People records (including sensitive fields and identifiers), employment ' +
-        'records and contracts, and employee relations cases. Holds no decision.',
-      grants: [...module_('people'), ...module_('employment'), ...module_('relations')],
+        'records and contracts, and employee relations cases. Decides career matters for the ' +
+        'organisation (confirms successors, decides mobility recommendations) that the manager ' +
+        'persona nominates and recommends, and prepares none of them.',
+      grants: [
+        ...module_('people'),
+        ...module_('employment'),
+        ...module_('relations'),
+        ...CAREER_DECISIONS,
+        ...named('work:career:mobility:read', 'work:career:succession:read'),
+      ],
     }),
     role({
       key: 'work-testing-time-leave-officer',
@@ -286,13 +335,13 @@ export const workRoles = (catalogue = workCatalogue()) => {
       description:
         'TESTING ONLY. Decides what the other personas prepare (attendance, leave, letters, ' +
         'establishment, requisitions, offers, workflow approvals), and runs performance and ' +
-        'career for a team. Holds no payroll or compensation decision.',
+        'career for a team: nominates successors and recommends moves, which the HR records ' +
+        'officer persona confirms or decides. Holds no payroll, compensation or career decision.',
       grants: [
         ...OTHER_DECISIONS,
         ...module_('performance'),
-        ...module_('career'),
+        ...prepares('career'),
         ...named(
-          'work:workflow:approval:escalate',
           'work:workflow:instance:read',
           'work:attendance:read',
           'work:leave:read',
