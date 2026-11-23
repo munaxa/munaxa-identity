@@ -18,7 +18,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const catalogue = JSON.parse(
   readFileSync(resolve(here, '../../../artifacts/work-permissions.json'), 'utf8'),
 );
-const seed = readFileSync(resolve(here, 'seed-work-roles.mjs'), 'utf8');
+const sources = ['seed-work-roles.mjs', 'work-roles.mjs'].map((file) => [
+  file,
+  readFileSync(resolve(here, file), 'utf8'),
+]);
 
 const declared = new Set(catalogue);
 const problems = [];
@@ -35,12 +38,14 @@ for (const grant of catalogue) {
   }
 }
 
-// Every literal `work:…` string written in the seed script must be a declared grant. The script
-// composes roles from module filters rather than literals, so this catches the case where somebody
-// adds one by hand — which is exactly when drift becomes possible.
-for (const [literal] of seed.matchAll(/'(work:[^']+)'/g)) {
-  if (!declared.has(literal))
-    problems.push(`seed-work-roles.mjs names ${literal}, which Work does not declare.`);
+// Every literal `work:…` string written in the role definitions must be a declared grant. Roles are
+// composed mostly from module filters, and the few literals (the decisions, and the reads a
+// persona needs beside its own module) are exactly where drift becomes possible.
+for (const [file, source] of sources) {
+  for (const [, literal] of source.matchAll(/'(work:[^']+)'/g)) {
+    if (!declared.has(literal))
+      problems.push(`${file} names ${literal}, which Work does not declare.`);
+  }
 }
 
 if (problems.length > 0) {

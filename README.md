@@ -41,6 +41,22 @@ pnpm --filter @identity/api dev
 The last command prints the account's `sub`. That value is what Munaxa Work needs:
 `pnpm db:bootstrap --platform-user-id <sub>`.
 
+The eight Testing persona roles (`work-testing-*`: organization administrator, HR records officer,
+time and leave officer, payroll preparer, payroll approver, recruiter, approver and manager,
+employee) are seeded only on request and never in production. They are defined in
+`apps/api/scripts/work-roles.mjs` (`node apps/api/scripts/work-roles.mjs --testing-personas` prints
+them) and measured by `packages/testing/src/token-size.integration.test.ts`:
+
+```bash
+IDENTITY_BASE_URL=https://id.test.munaxa.com \
+  pnpm db:seed-work-roles --organisation acme --testing-personas --environment testing
+# Always needs IDENTITY_BASE_URL on a non-production host, whatever NODE_ENV says. Before
+# connecting, reads the database URL with pg's own parser and refuses a production host
+# (munaxa-prod-*, *.prod.munaxa.internal), a database named for production, a host= parameter, a
+# socket, a missing host or database, a raw non-loopback address, and PGHOST/PGDATABASE set.
+# A tunnel to production through localhost is caught only by the environment and issuer checks.
+```
+
 ## The API
 
 |                                         |                                                                     |
