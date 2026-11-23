@@ -319,6 +319,70 @@ describe('the seed script, asked for the Testing personas', () => {
       PERSONAS,
       { ...TESTING, DIRECT_DATABASE_URL: 'not a url' },
     ],
+    // pg's own parsing, which a `new URL()` check missed (review r2).
+    [
+      'a host parameter pointing past the authority to production',
+      PERSONAS,
+      {
+        ...TESTING,
+        DIRECT_DATABASE_URL:
+          'postgres://owner:placeholder@localhost/identity?host=munaxa-prod-pg.abc123.eu-central-1.rds.amazonaws.com',
+      },
+    ],
+    [
+      'an empty host, which pg fills from PGHOST',
+      PERSONAS,
+      { ...TESTING, DIRECT_DATABASE_URL: 'postgres:///identity' },
+    ],
+    [
+      'an encoded Unix socket',
+      PERSONAS,
+      {
+        ...TESTING,
+        DIRECT_DATABASE_URL: 'postgres://owner:placeholder@%2Fvar%2Frun%2Fpg/identity',
+      },
+    ],
+    [
+      'a socket: URL',
+      PERSONAS,
+      { ...TESTING, DIRECT_DATABASE_URL: 'socket:/var/run/pg?db=identity' },
+    ],
+    [
+      "production's private namespace with a trailing dot",
+      PERSONAS,
+      {
+        ...TESTING,
+        DIRECT_DATABASE_URL: 'postgresql://owner:placeholder@DB.Prod.Munaxa.Internal./identity',
+      },
+    ],
+    [
+      'a raw address that is not loopback',
+      PERSONAS,
+      { ...TESTING, DIRECT_DATABASE_URL: 'postgresql://owner:placeholder@10.131.4.5/identity' },
+    ],
+    [
+      'PGHOST set beside an innocent URL',
+      PERSONAS,
+      {
+        ...TESTING,
+        DIRECT_DATABASE_URL: 'postgresql://owner:placeholder@localhost/identity',
+        PGHOST: 'munaxa-prod-pg.abc123.eu-central-1.rds.amazonaws.com',
+      },
+    ],
+    [
+      'PGDATABASE set beside an innocent URL',
+      PERSONAS,
+      {
+        ...TESTING,
+        DIRECT_DATABASE_URL: 'postgresql://owner:placeholder@localhost/identity',
+        PGDATABASE: 'identity_prod',
+      },
+    ],
+    [
+      'no database named, which pg fills from PGDATABASE or the user',
+      PERSONAS,
+      { ...TESTING, DIRECT_DATABASE_URL: 'postgresql://owner:placeholder@localhost/' },
+    ],
   ])('refuses with %s', (_case, args, env) => {
     const result = seed(['--organisation', 'acme', ...args], env);
 
@@ -326,33 +390,29 @@ describe('the seed script, asked for the Testing personas', () => {
     expect(result.stderr).toContain('Refused:');
   });
 
-  it('accepts the non-production database names the platform uses', () => {
+  it('accepts the non-production databases the platform uses, and loopback', () => {
     const refusal = (databaseUrl: string): string =>
       execFileSync(
         process.execPath,
         [
           '--input-type=module',
           '-e',
-          `import { testingPersonasRefusal } from ${JSON.stringify(script('work-roles.mjs'))};
-           process.stdout.write(String(testingPersonasRefusal(JSON.parse(process.argv[1]))));`,
-          JSON.stringify({
-            environment: 'testing',
-            baseUrl: 'https://id.test.munaxa.com',
-            databaseUrl,
-          }),
+          `import { databaseRefusal } from ${JSON.stringify(script('database-target.mjs'))};
+           process.stdout.write(String(databaseRefusal(process.argv[1], {})));`,
+          databaseUrl,
         ],
         { encoding: 'utf8' },
       );
 
-    expect(
-      refusal(
-        'postgresql://owner:placeholder@munaxa-nonprod-pg.abc123.eu-central-1.rds.amazonaws.com:5432/identity',
-      ),
-    ).toBe('undefined');
-    expect(
-      refusal('postgresql://owner:placeholder@db.nonprod.munaxa.internal:5432/identity_nonprod'),
-    ).toBe('undefined');
-    expect(refusal('postgresql://owner:placeholder@localhost:5432/identity')).toBe('undefined');
+    for (const accepted of [
+      'postgresql://owner:placeholder@munaxa-nonprod-pg.abc123.eu-central-1.rds.amazonaws.com:5432/identity',
+      'postgresql://owner:placeholder@db.nonprod.munaxa.internal:5432/identity_nonprod',
+      'postgresql://owner:placeholder@localhost:5432/identity',
+      'postgres://owner:placeholder@127.0.0.1:5432/identity',
+      'postgres://owner:placeholder@[::1]:5432/identity',
+    ]) {
+      expect([accepted, refusal(accepted)]).toEqual([accepted, 'undefined']);
+    }
   });
 
   it('passes the guard for the Testing Identity, and only then asks for a database', () => {

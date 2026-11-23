@@ -89,38 +89,6 @@ const isNonProductionHost = (host) =>
   host.endsWith('.example');
 
 /**
- * A database host that is production's, by the names munaxa-platform gives it
- * (`infra/aws/stack`): the RDS instance is `munaxa-<environment>-pg` (`data.tf`, prefix from
- * `network.tf`), so production's endpoint starts `munaxa-prod-pg.`; and the private namespace is
- * `<environment>.munaxa.internal` (`services.tf`). Anything under the `munaxa-prod` prefix counts.
- */
-const isProductionDatabaseHost = (host) =>
-  host.split('.')[0].startsWith('munaxa-prod') ||
-  host === 'prod.munaxa.internal' ||
-  host.endsWith('.prod.munaxa.internal');
-
-/** A database name that says production: `prod` or `production` as a word of it. */
-const isProductionDatabaseName = (name) => /(^|[^a-z])prod(uction)?([^a-z]|$)/i.test(name);
-
-/** Why the database named by `databaseUrl` must not receive the personas, or `undefined`. */
-const databaseRefusal = (databaseUrl) => {
-  if (databaseUrl === undefined || databaseUrl.trim() === '') return undefined;
-  let url;
-  try {
-    url = new URL(databaseUrl);
-  } catch {
-    return 'The database URL is not a URL, so its target cannot be confirmed as non-production.';
-  }
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (isProductionDatabaseHost(host))
-    return `The database host ${host} is production's (munaxa-prod). Testing personas are refused there.`;
-  const name = decodeURIComponent(url.pathname.replace(/^\//, ''));
-  if (isProductionDatabaseName(name))
-    return `The database ${name} is named for production. Testing personas are refused there.`;
-  return undefined;
-};
-
-/**
  * Why the Testing personas must not be provisioned here, or `undefined` when they may be.
  *
  * `NODE_ENV` cannot answer it: Testing runs Identity with `NODE_ENV=production`, exactly as
@@ -131,13 +99,14 @@ const databaseRefusal = (databaseUrl) => {
  *      name) — an explicit statement, never a default;
  *   2. `IDENTITY_BASE_URL` is set and names a non-production host (`id.test.munaxa.com`): it is the
  *      token issuer, so it says which Identity these roles would sign into;
- *   3. the database the script would write to (`databaseUrl`, the connection string it is about to
- *      use) is not production's by host or by name.
+ *   3. the database the script would write to is not production's: `databaseRefusal` in
+ *      `database-target.mjs`, which reads the connection string with pg's own parser and so has a
+ *      dependency this file deliberately does not.
  *
- * Checked before any connection. What it cannot see is a tunnel: a production database reached
+ * Checked before any connection. What neither can see is a tunnel: a production database reached
  * through `localhost` is caught only by 1 and 2, which is why neither is optional.
  */
-export const testingPersonasRefusal = ({ environment, baseUrl, databaseUrl }) => {
+export const testingPersonasRefusal = ({ environment, baseUrl }) => {
   if (environment === undefined || environment.trim() === '')
     return 'Testing personas need --environment <name> (testing, staging, development or ci).';
   if (!NON_PRODUCTION_ENVIRONMENTS.includes(environment.trim().toLowerCase()))
@@ -154,7 +123,7 @@ export const testingPersonasRefusal = ({ environment, baseUrl, databaseUrl }) =>
   if (!isNonProductionHost(host))
     return `IDENTITY_BASE_URL names ${host}, not a non-production host. Testing personas are refused there.`;
 
-  return databaseRefusal(databaseUrl);
+  return undefined;
 };
 
 /**

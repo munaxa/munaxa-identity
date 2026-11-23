@@ -42,6 +42,7 @@ import {
   workCatalogue,
   workRoles,
 } from './work-roles.mjs';
+import { databaseRefusal } from './database-target.mjs';
 
 const argument = (name) => {
   const index = process.argv.indexOf(`--${name}`);
@@ -68,12 +69,14 @@ const run = async () => {
 
   // Before anything connects: a refused run must not be able to write a single row.
   if (withPersonas) {
-    const refusal = testingPersonasRefusal({
-      environment: argument('environment'),
-      baseUrl: process.env.IDENTITY_BASE_URL,
-      // The very connection string used below, so the check and the write cannot disagree.
-      databaseUrl: connection,
-    });
+    const refusal =
+      testingPersonasRefusal({
+        environment: argument('environment'),
+        baseUrl: process.env.IDENTITY_BASE_URL,
+      }) ??
+      // The very connection string used below, read as pg reads it, so the check and the write
+      // cannot disagree about which database this is.
+      databaseRefusal(connection, process.env);
     if (refusal !== undefined) fail(`Refused: ${refusal}`);
   }
   const roles = withPersonas ? [...staging, ...testing] : staging;

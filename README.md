@@ -50,9 +50,11 @@ them) and measured by `packages/testing/src/token-size.integration.test.ts`:
 ```bash
 IDENTITY_BASE_URL=https://id.test.munaxa.com \
   pnpm db:seed-work-roles --organisation acme --testing-personas --environment testing
-# Always needs IDENTITY_BASE_URL on a non-production host, whatever NODE_ENV says. Refuses, before
-# connecting, a production database host (munaxa-prod-*, *.prod.munaxa.internal) or a database
-# named for production. A tunnel to production through localhost is caught only by the first two.
+# Always needs IDENTITY_BASE_URL on a non-production host, whatever NODE_ENV says. Before
+# connecting, reads the database URL with pg's own parser and refuses a production host
+# (munaxa-prod-*, *.prod.munaxa.internal), a database named for production, a host= parameter, a
+# socket, a missing host or database, a raw non-loopback address, and PGHOST/PGDATABASE set.
+# A tunnel to production through localhost is caught only by the environment and issuer checks.
 ```
 
 ## The API
