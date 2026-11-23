@@ -3,9 +3,9 @@
  * Provision the Munaxa Work roles an organisation grants.
  *
  * Every grant is read from `artifacts/work-permissions.json`, which Munaxa Work generated. Nothing
- * here types a Work permission, and nothing here invents one: the role definitions below name
- * *groups* — a module, or a module filtered to its reads — and the group is expanded against the
- * catalogue. A group that expands to nothing is an error rather than an empty role, because an
+ * here invents a Work permission: the role definitions in `work-roles.mjs` name *groups* — a
+ * module, a module filtered to its reads, a module without its decisions — and the decisions
+ * themselves by name, and every name is expanded and checked against the catalogue. A group that expands to nothing is an error rather than an empty role, because an
  * empty role is a person who can sign in and do nothing, diagnosed as a broken product.
  *
  * Three rules are enforced here rather than trusted:
@@ -22,66 +22,36 @@
  * writes roles only through the permission-gated administration path.
  *
  *   DIRECT_DATABASE_URL=… node apps/api/scripts/seed-work-roles.mjs --organisation <slug>
+ *
+ * The eight Testing persona roles (MW-003, keys `work-testing-*`) are provisioned only on request,
+ * and only outside production:
+ *
+ *   DIRECT_DATABASE_URL=… node apps/api/scripts/seed-work-roles.mjs --organisation <slug> \
+ *     --testing-personas --environment testing
+ *
+ * See `testingPersonasRefusal` for exactly what is refused and why.
  */
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import pg from 'pg';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const CATALOGUE = resolve(here, '../../../artifacts/work-permissions.json');
+import {
+  TESTING_PERSONA_PREFIX,
+  testingPersonasRefusal,
+  workCatalogue,
+  workRoles,
+} from './work-roles.mjs';
 
 const argument = (name) => {
   const index = process.argv.indexOf(`--${name}`);
   return index === -1 ? undefined : process.argv[index + 1];
 };
+const flag = (name) => process.argv.includes(`--${name}`);
 
-const catalogue = JSON.parse(readFileSync(CATALOGUE, 'utf8'));
-const declared = new Set(catalogue);
+const declared = new Set(workCatalogue());
 
-/** `work:<module>:…` — every grant in one Work module. */
-const module_ = (name) => catalogue.filter((grant) => grant.startsWith(`work:${name}:`));
-/** The same, filtered to grants whose final segment is `read`. */
-const reads = (name) => module_(name).filter((grant) => grant.endsWith(':read'));
-
-/**
- * The staging roles.
- *
- * The operator is composed to satisfy both halves of the acceptance test with real permissions: it
- * can read a person (`work:people:person:read`) and it deliberately holds nothing from payroll, so
- * `work:payroll:accounting` is a genuine 403 rather than a fabricated one.
- *
- * The recruiter exists so that shared staging can be tested by more than one person at once, and so
- * that "these two accounts see different things" is something the environment can actually
- * demonstrate. The two overlap only on People reads and each holds a whole module the other does
- * not, which is what makes a cross-check meaningful in both directions.
- */
-const ROLES = [
-  {
-    key: 'work-staging-operator',
-    name: 'Munaxa Work — staging operator',
-    description:
-      'Identity, People (read), Leave and Attendance (read) in Munaxa Work. Deliberately excludes payroll and compensation, so a forbidden request has something real to be forbidden from.',
-    grants: () => [
-      ...module_('identity'),
-      ...reads('people'),
-      ...module_('leave'),
-      ...reads('attendance'),
-    ],
-  },
-  {
-    key: 'work-staging-recruiter',
-    name: 'Munaxa Work — staging recruiter',
-    description:
-      'Recruitment and onboarding in Munaxa Work, plus People (read). Deliberately holds nothing ' +
-      'from leave or attendance, which the operator role does hold — so the two roles differ in ' +
-      'both directions and neither is a subset of the other. A multi-user test where one role ' +
-      'contains the other proves only that grants accumulate, not that they are separated.',
-    grants: () => [...module_('recruitment'), ...module_('onboarding'), ...reads('people')],
-  },
-];
+/** The role definitions live in `work-roles.mjs`, where the token-size test measures them too. */
+const { staging, testing } = workRoles();
 
 const fail = (message) => {
   process.stderr.write(`${message}\n`);
@@ -89,6 +59,24 @@ const fail = (message) => {
 };
 
 const run = async () => {
+  const withPersonas = flag('testing-personas');
+
+  // Before anything connects: a refused run must not be able to write a single row.
+  if (withPersonas) {
+    const refusal = testingPersonasRefusal({
+      environment: argument('environment'),
+      nodeEnv: process.env.NODE_ENV,
+      baseUrl: process.env.IDENTITY_BASE_URL,
+    });
+    if (refusal !== undefined) fail(`Refused: ${refusal}`);
+  }
+  const roles = withPersonas ? [...staging, ...testing] : staging;
+
+  for (const role of roles) {
+    if (role.key.startsWith(TESTING_PERSONA_PREFIX) !== testing.includes(role))
+      fail(`Role ${role.key} is misfiled: only Testing personas carry ${TESTING_PERSONA_PREFIX}.`);
+  }
+
   const connection =
     process.env.DIRECT_DATABASE_URL ??
     process.env.DATABASE_MIGRATION_URL ??
@@ -113,8 +101,8 @@ const run = async () => {
     if (tenantId === undefined)
       fail(`No active organisation "${slug}". Create it before seeding roles.`);
 
-    for (const role of ROLES) {
-      const grants = role.grants();
+    for (const role of roles) {
+      const grants = role.grants;
 
       if (grants.length === 0)
         fail(`Role ${role.key} expanded to no grants. The catalogue moved under it.`);
