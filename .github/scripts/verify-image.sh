@@ -18,7 +18,7 @@
 #   7. The libraries a running Node process maps after loading the Prisma engine: the musl loader,
 #      no glibc, every shared object outside node_modules owned by an Alpine package (so the
 #      scanner, scan-image.sh, sees every one of them).
-#   Also: libssl3 and libcrypto3 at or above 3.5.9-r1, and no npm, npx, corepack, yarn or pnpm.
+#   Also: libssl3 and libcrypto3 at or above 3.5.10-r0, and no npm, npx, corepack, yarn or pnpm.
 set -euo pipefail
 
 REF="${1:?usage: verify-image.sh <image ref> <runtime|migrate>}"
@@ -64,9 +64,9 @@ want="$(docker run --rm --entrypoint sh "$base" -c "apk info 2>/dev/null | sort"
 have="$(in_image "apk info 2>/dev/null | sort")"
 [ "$want" = "$have" ] || fail "OS packages differ from the base: $(diff <(echo "$want") <(echo "$have") | grep '^[<>]' | tr '\n' ' ')"
 
-# OpenSSL at or above Alpine's 3.5.9-r1 (4 HIGH in 3.5.9-r0, Grype scan of 20 Nov 2026), and no
+# OpenSSL at or above Alpine's 3.5.10-r0 (5 HIGH in 3.5.9-r1, Grype scan of 21 Nov 2026), and no
 # package manager or Node tooling (npm, npx, corepack, yarn, pnpm) left in the image.
-for want in libssl3=3.5.9-r1 libcrypto3=3.5.9-r1; do
+for want in libssl3=3.5.10-r0 libcrypto3=3.5.10-r0; do
   name="${want%%=*}"
   have_v="$(in_image "apk info -v 2>/dev/null | sed -n 's/^$name-\([0-9][^ ]*\)\$/\1/p'")"
   [ -n "$have_v" ] || fail "$name is not installed as a package"
