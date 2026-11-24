@@ -107,6 +107,13 @@ export class EdgeMiddleware implements NestMiddleware {
     for (const [name, value] of Object.entries(platformResponse.headers)) {
       response.setHeader(name, value);
     }
+    // `same-origin`, not the API default `no-referrer`. Identity serves its own forms (sign-in,
+    // MFA, password recovery), and a browser that loaded a page under `no-referrer` sends
+    // `Origin: null` on the page's form POST (Fetch, "append a request Origin header"), which the
+    // origin check above can only refuse: every real sign-in failed with SECURITY_CSRF_INVALID in
+    // Testing on 24 Nov 2026. `same-origin` sends the origin to Identity itself and still nothing
+    // to any other site, so no URL (a reset token, a return path) leaks cross-origin.
+    response.setHeader('referrer-policy', 'same-origin');
     if (short) {
       response.status(short.status).json(short.body);
       return;

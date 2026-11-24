@@ -186,7 +186,7 @@ describe('the MFA routes over HTTP', () => {
     await mfaController.startEnrollment({}, request({ '__Host-mx_session': session }), start.res);
     expect(start.recorded.status).toBe(200);
     expect(start.recorded.headers['cache-control']).toBe('no-store');
-    expect(start.recorded.headers['referrer-policy']).toBe('no-referrer');
+    expect(start.recorded.headers['referrer-policy']).toBe('same-origin');
     secret = (start.recorded.body as { secret: string }).secret;
     expect(secret).toMatch(/^[A-Z2-7]{32}$/);
 
