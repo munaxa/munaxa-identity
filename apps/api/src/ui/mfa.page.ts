@@ -3,7 +3,7 @@
  *
  * Four states: asking for a code at sign-in, starting an enrollment, confirming it (the only page
  * that ever shows the secret), and showing the recovery codes (the only page that ever shows them,
- * once). Every response carrying one of these is `no-store` with `Referrer-Policy: no-referrer`, set
+ * once). Every response carrying one of these is `no-store` with `Referrer-Policy: same-origin`, set
  * by the controller.
  */
 
@@ -139,7 +139,7 @@ export const mfaPage = (options: MfaPageOptions): string => {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="same-origin">
 <title>${escape(title)}</title>
 <style>
   :root { color-scheme: light dark; --line: color-mix(in srgb, currentColor 20%, transparent); }

@@ -120,6 +120,8 @@ const send = (
     readonly cookies?: Record<string, string>;
     readonly headers?: Record<string, string>;
     readonly instance?: number;
+    /** The Origin header; a browser sends the literal `null` under a `no-referrer` page. */
+    readonly origin?: string;
   },
 ): Promise<Reply> =>
   new Promise((resolve, reject) => {
@@ -132,7 +134,7 @@ const send = (
     const lines = [
       `${method} ${target} HTTP/1.1`,
       'Host: localhost',
-      `Origin: ${ORIGIN}`,
+      `Origin: ${options.origin ?? ORIGIN}`,
       `X-Forwarded-For: ${options.ip}`,
       'Connection: close',
       `Content-Length: ${String(Buffer.byteLength(payload))}`,
@@ -411,6 +413,33 @@ describe('sign-in: POST /api/auth/login', () => {
       expect(reply.status, JSON.stringify(spelling)).toBe(429);
       expect(JSON.parse(reply.body)).toMatchObject({ code: 'AUTH_RATE_LIMITED' });
     }
+  });
+});
+
+describe('a browser form keeps its origin (Testing, 24 Nov 2026)', () => {
+  // A page served under `Referrer-Policy: no-referrer` makes the browser send `Origin: null` on the
+  // page's own form POST, and the origin allow-list can only refuse that: every real sign-in failed
+  // with SECURITY_CSRF_INVALID. The pages must be served `same-origin`.
+  it('serves every Identity page with a same-origin referrer policy, never no-referrer', async () => {
+    for (const target of ['/api/auth/login', '/api/auth/mfa', '/api/auth/mfa/enroll']) {
+      const page = await send('GET', target, { ip: freshIp() });
+      expect(page.headers['referrer-policy'], target).toBe('same-origin');
+      expect(page.body, target).not.toContain('no-referrer');
+    }
+  });
+
+  it('admits a form post from the trusted origin and refuses the null origin', async () => {
+    const body = { identifier: freshIdentifier(), password: 'x', organisation: org.key };
+    const trusted = await send('POST', '/api/auth/login', { ip: freshIp(), form: true, body });
+    expect(trusted.status).not.toBe(403);
+    const opaque = await send('POST', '/api/auth/login', {
+      ip: freshIp(),
+      form: true,
+      body,
+      origin: 'null',
+    });
+    expect(opaque.status).toBe(403);
+    expect(opaque.body).toContain('SECURITY_CSRF_INVALID');
   });
 });
 

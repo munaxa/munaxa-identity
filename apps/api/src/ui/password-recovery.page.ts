@@ -9,7 +9,7 @@
  *   a form; the token is spent by the POST that form makes.
  * - **The token leaves the URL as soon as it can.** It arrives in the link's query string because
  *   an email link has nowhere else to carry it, and from there it goes into a hidden form field, so
- *   the POST that uses it carries it in a body. Every response is `no-store` and `no-referrer` (the
+ *   the POST that uses it carries it in a body. Every response is `no-store` and `same-origin` referrers (the
  *   edge sets both), so the page is neither cached nor named in a `Referer` to anything it links.
  */
 
@@ -84,7 +84,7 @@ const shell = (language: Language, title: string, body: string): string => `<!do
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="same-origin">
 <title>${escape(title)}</title>
 <style>
   :root { color-scheme: light dark; --line: color-mix(in srgb, currentColor 20%, transparent); }

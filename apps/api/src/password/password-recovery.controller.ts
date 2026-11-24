@@ -32,7 +32,7 @@ import type { PasswordRecovery } from './password-recovery.js';
  *
  * Nothing here logs a token, a password, an address or a URL with a query string. The request log
  * records the path only, and the edge sets `Cache-Control: no-store` and `Referrer-Policy:
- * no-referrer` on every response.
+ * same-origin` on every response (nothing cross-origin; see EdgeMiddleware).
  */
 @Controller('auth/password')
 export class PasswordRecoveryController {

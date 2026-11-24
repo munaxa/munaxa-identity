@@ -47,7 +47,7 @@ import {
  * The challenge cookie is read by these routes and by nothing else in the service, and the session
  * routes read only the session cookie — so a pending challenge can never stand in for a session,
  * and an `enroll` challenge reaches only the two enrollment routes. Every response is `no-store`
- * and `no-referrer`: some of them carry a secret or recovery codes, exactly once.
+ * and a `same-origin` referrer policy: some of them carry a secret or recovery codes, exactly once.
  *
  * Every state-changing route is behind `EdgeMiddleware`'s origin allow-list (the CSRF control for
  * cookie-authenticated requests), and the challenge cookie is additionally `SameSite=Strict`.
@@ -292,12 +292,13 @@ export class MfaController {
 
   private page(response: Response, status: number, options: MfaPageOptions): void {
     response.setHeader('cache-control', 'no-store');
-    response.setHeader('referrer-policy', 'no-referrer');
+    response.setHeader('referrer-policy', 'same-origin');
     response.status(status).type('html').send(mfaPage(options));
   }
 
   /**
-   * `no-store` and `no-referrer` on everything; a dependency failure is a 503 that names nothing
+   * `no-store` and `same-origin` referrers on everything (never cross-origin; `no-referrer` would
+   * make the page's own form POST carry `Origin: null`, which the edge refuses); a dependency failure is a 503 that names nothing
    * about the caller. The log line never carries a code, a secret, a recovery code or a cookie.
    */
   private async answer(
@@ -306,7 +307,7 @@ export class MfaController {
     work: (context: RequestContext) => Promise<void>,
   ): Promise<void> {
     response.setHeader('cache-control', 'no-store');
-    response.setHeader('referrer-policy', 'no-referrer');
+    response.setHeader('referrer-policy', 'same-origin');
     const context: RequestContext = {
       correlationId:
         (request as Request & { correlationId?: string }).correlationId ?? randomUUID(),
