@@ -5,7 +5,11 @@
  * that ever shows the secret), and showing the recovery codes (the only page that ever shows them,
  * once). Every response carrying one of these is `no-store` with `Referrer-Policy: same-origin`, set
  * by the controller.
+ *
+ * They are drawn in the shared Identity frame (`layout.ts`), the same card as the sign-in page.
  */
+
+import { alert, escapeHtml as escape, field, frame } from './layout.js';
 
 export type MfaPageState =
   | { readonly kind: 'verify' }
@@ -22,7 +26,6 @@ export interface MfaPageOptions {
 
 const COPY = {
   en: {
-    dir: 'ltr',
     verifyTitle: 'Two-step verification',
     verifyLead: 'Enter the six-digit code from your authenticator app.',
     code: 'Authentication code',
@@ -46,7 +49,6 @@ const COPY = {
     signIn: 'Back to sign-in',
   },
   ar: {
-    dir: 'rtl',
     verifyTitle: 'التحقق بخطوتين',
     verifyLead: 'أدخل الرمز المكوّن من ستة أرقام من تطبيق المصادقة.',
     code: 'رمز المصادقة',
@@ -70,103 +72,70 @@ const COPY = {
   },
 } as const;
 
-const escape = (value: string): string =>
-  value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#x27;');
-
 export const mfaPage = (options: MfaPageOptions): string => {
   const copy = COPY[options.language];
   const hidden = `<input type="hidden" name="returnTo" value="${escape(options.returnTo)}">
     <input type="hidden" name="lang" value="${options.language}">`;
   const message = options.error === undefined ? undefined : copy[options.error];
   const terminal = options.error === 'expired' || options.error === 'locked';
-  const signInLink = `<p><a href="/api/auth/login?lang=${options.language}&amp;returnTo=${encodeURIComponent(options.returnTo)}">${escape(copy.signIn)}</a></p>`;
+  const signInLink = `<p><a class="link" href="/api/auth/login?lang=${options.language}&amp;returnTo=${encodeURIComponent(options.returnTo)}">${escape(copy.signIn)}</a></p>`;
 
   let title: string;
   let body: string;
+  let lead: string | undefined;
   switch (options.state.kind) {
     case 'verify':
       title = copy.verifyTitle;
       body = terminal
         ? signInLink
-        : `<p class="lead">${escape(copy.verifyLead)}</p>
-  <form method="post" action="/api/auth/mfa/verify">
+        : `<form method="post" action="/api/auth/mfa/verify">
     ${hidden}
-    <label for="code">${escape(copy.code)}</label>
-    <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" autofocus>
-    <label for="recoveryCode">${escape(copy.recovery)}</label>
-    <input id="recoveryCode" name="recoveryCode" autocomplete="off" spellcheck="false">
+    ${field('code', copy.code, '<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" autofocus>', false)}
+    ${field('recoveryCode', copy.recovery, '<input id="recoveryCode" name="recoveryCode" autocomplete="off" spellcheck="false">', false)}
     <button type="submit">${escape(copy.verify)}</button>
   </form>`;
+      lead = terminal ? undefined : copy.verifyLead;
       break;
     case 'enroll-start':
       title = copy.enrollTitle;
       body = terminal
         ? signInLink
-        : `<p class="lead">${escape(copy.enrollLead)}</p>
-  <form method="post" action="/api/auth/mfa/enrollment">
+        : `<form method="post" action="/api/auth/mfa/enrollment">
     ${hidden}
     <button type="submit">${escape(copy.start)}</button>
   </form>`;
+      lead = terminal ? undefined : copy.enrollLead;
       break;
     case 'enroll-confirm':
       title = copy.enrollTitle;
-      body = `<p class="lead">${escape(copy.enrollLead)}</p>
-  <p>${escape(copy.key)}</p>
-  <p class="secret"><code>${escape(options.state.secret.replaceAll(/(.{4})/g, '$1 ').trim())}</code></p>
-  <p><a href="${escape(options.state.uri)}">${escape(copy.link)}</a></p>
+      lead = copy.enrollLead;
+      body = `<div class="field">
+    <p class="lead">${escape(copy.key)}</p>
+    <p class="secret"><code>${escape(options.state.secret.replaceAll(/(.{4})/g, '$1 ').trim())}</code></p>
+    <p><a class="link" href="${escape(options.state.uri)}">${escape(copy.link)}</a></p>
+  </div>
   <form method="post" action="/api/auth/mfa/enrollment/confirm">
     ${hidden}
-    <label for="code">${escape(copy.code)}</label>
-    <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus>
+    ${field('code', copy.code, '<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus>', true)}
     <button type="submit">${escape(copy.confirm)}</button>
   </form>`;
       break;
     case 'recovery-codes':
       title = copy.codesTitle;
-      body = `<p class="lead">${escape(copy.codesLead)}</p>
-  <ul class="codes">${options.state.codes.map((code) => `<li><code>${escape(code)}</code></li>`).join('')}</ul>
-  <p><a class="button" href="${escape(options.state.next)}">${escape(copy.continue)}</a></p>`;
+      lead = copy.codesLead;
+      body = `<ul class="codes">${options.state.codes.map((code) => `<li><code>${escape(code)}</code></li>`).join('')}</ul>
+  <a class="button" href="${escape(options.state.next)}">${escape(copy.continue)}</a>`;
       break;
   }
 
-  return `<!doctype html>
-<html lang="${options.language}" dir="${copy.dir}">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="same-origin">
-<title>${escape(title)}</title>
-<style>
-  :root { color-scheme: light dark; --line: color-mix(in srgb, currentColor 20%, transparent); }
-  * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
-         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; padding: 1.5rem; }
-  main { width: 100%; max-width: 24rem; }
-  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
-  p.lead { margin: 0 0 1.5rem; opacity: .75; font-size: .875rem; }
-  label { display: block; font-size: .875rem; margin: 0 0 .25rem; }
-  input { width: 100%; padding: .625rem .75rem; margin: 0 0 1rem; font: inherit;
-          border: 1px solid var(--line); border-radius: .375rem; background: transparent; color: inherit; }
-  button, a.button { display: block; text-align: center; width: 100%; padding: .625rem; font: inherit;
-           font-weight: 600; cursor: pointer; border: 1px solid var(--line); border-radius: .375rem;
-           background: transparent; color: inherit; text-decoration: none; }
-  .error { padding: .75rem; margin: 0 0 1rem; font-size: .875rem; border-radius: .375rem;
-           border: 1px solid var(--line); }
-  .secret code, .codes code { font-size: 1.05rem; letter-spacing: .05em; word-break: break-all; direction: ltr; }
-  .codes { columns: 2; padding-inline-start: 1.25rem; }
-</style>
-</head>
-<body>
-<main>
-  <h1>${escape(title)}</h1>
-  ${message === undefined ? '' : `<p class="error" role="alert">${escape(message)}</p>`}
-  ${body}
-</main>
-</body>
-</html>`;
+  return frame({
+    language: options.language,
+    title,
+    body: `    <header>
+      <h1>${escape(title)}</h1>
+      ${lead === undefined ? '' : `<p class="lead">${escape(lead)}</p>`}
+    </header>
+    ${alert('danger', 'alert', message)}
+  ${body}`,
+  });
 };
