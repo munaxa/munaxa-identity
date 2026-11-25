@@ -1,0 +1,257 @@
+# Publishing Munaxa Identity's images to Amazon ECR for **Testing (nonprod) only**, without a manual
+# approval, so the Testing stack can pin a fresh digest after every merge.
+#
+#   munaxa-identity/api      apps/api/Dockerfile, target runtime
+#   munaxa-identity/migrate  apps/api/Dockerfile, target migrate (the release job)
+#
+# A copy of publish-images-ecr.yml (the production release path, unchanged: an image/<sha> tag and
+# the owner's approval in the `image-release` environment) with four differences:
+#
+# - **When.** After CI succeeds on a commit pushed to main, or dispatched from main for one commit
+#   on main. Never from a branch, a tag or a pull request. A commit that changes only
+#   documentation publishes nothing.
+# - **Where it may push.** The `image-testing` environment, which has no required reviewer. The
+#   image publisher role (munaxa-platform infra/aws/bootstrap/iam.tf) trusts that environment only
+#   for this file on refs/heads/main, so no other workflow, branch or tag can use it. The role may
+#   still push only to this product's repositories, and cannot delete or overwrite anything
+#   (immutable tags, no delete permission).
+# - **Tags.** `testing-<short>` and `testing-sha-<full>`, never `<short>` or `sha-<full>`, so a
+#   Testing build can never take a production release tag, and the registry keeps the newest 30
+#   Testing builds separately from the 20 release builds (lifecycle policy in the same file).
+# - **Nothing is deployed.** Publishing only puts an image in ECR. Testing changes when its pinned
+#   digest changes (munaxa-platform infra/aws, an owner-approved apply). Production keeps its
+#   own gates: the stack refuses product images in production while the D-SSL exception exists,
+#   and production pins only come through the owner-approved release path.
+#
+# The same build, verification and scans as the release path: the image is built and loaded,
+# verified and scanned (HIGH or CRITICAL refuses it; only the Testing-only D-SSL exception, until it
+# expires, can accept a listed finding), pushed, pulled back by digest and verified again. No
+# registry credential exists; the role is assumed through GitHub OIDC.
+
+name: Publish images to ECR for Testing
+
+on:
+  # After the CI workflow finishes on a commit pushed to main (a merged pull request). The source job
+  # publishes only when that run succeeded.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # By hand or by Claude, from main only, for one commit already on main (default: main's head).
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Full 40-character commit SHA on main to publish (empty: the head of main)'
+        required: false
+        default: ''
+
+concurrency:
+  group: publish-testing-${{ github.event.workflow_run.head_sha || inputs.sha || github.sha }}
+  cancel-in-progress: false # never cancel a half-finished push to a registry
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  REGISTRY: 229251310592.dkr.ecr.eu-central-1.amazonaws.com
+
+jobs:
+  source:
+    name: Resolve the source commit
+    # A failed or cancelled CI run is not an error here, just nothing to publish.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      short: ${{ steps.resolve.outputs.short }}
+      publish: ${{ steps.changes.outputs.publish }}
+    steps:
+      - name: Choose the commit (green CI on main, or a dispatch from main)
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          # The workflow that runs is main's (reviewed) copy. The publisher role's trust in AWS
+          # enforces the same thing: environment image-testing, ref refs/heads/main, this file.
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Testing images are published from main only, not from $GITHUB_REF"; exit 1
+          fi
+          case "$EVENT" in
+            workflow_run)
+              if [ "$RUN_EVENT" != push ] || [ "$RUN_BRANCH" != main ] || [ "$RUN_REPOSITORY" != "$GITHUB_REPOSITORY" ] || [ "$RUN_CONCLUSION" != success ]; then
+                echo "::error::only a successful CI run of a push to main publishes ($RUN_EVENT, $RUN_BRANCH, $RUN_REPOSITORY, $RUN_CONCLUSION)"; exit 1
+              fi
+              sha="$RUN_SHA" ;;
+            push) sha="$GITHUB_SHA" ;;
+            workflow_dispatch) sha="${INPUT_SHA:-$GITHUB_SHA}" ;;
+            *) echo "::error::unexpected event $EVENT"; exit 1 ;;
+          esac
+          # A full SHA only: a short one is ambiguous in principle.
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::not a full 40-hex commit SHA: '$sha'"; exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=${sha:0:7}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Nothing to publish when the commit changes only documentation: the images would be the
+      # same, and every publish costs registry space. A dispatch always publishes.
+      - name: Decide whether this commit can change an image
+        id: changes
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && git rev-parse -q --verify "$SHA^" >/dev/null \
+            && git diff --quiet "$SHA^" "$SHA" -- . ':(glob,exclude)docs/**' ':(glob,exclude)**/*.md'; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "$SHA changes only documentation: nothing to publish" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Confirm the commit is on main (reviewed history)
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main"; exit 1; }
+
+  publish:
+    name: ${{ matrix.repository }}
+    needs: source
+    if: needs.source.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: image-testing # no reviewer; the publisher role trusts it only on main and only for this file
+    permissions:
+      contents: read
+      packages: read # @munaxa/* from GitHub Packages, during the build only
+      id-token: write # GitHub OIDC, for the image publisher role
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repository: munaxa-identity/api
+            target: runtime
+          - repository: munaxa-identity/migrate
+            target: migrate
+    env:
+      SHA: ${{ needs.source.outputs.sha }}
+      SHORT: ${{ needs.source.outputs.short }}
+    steps:
+      - name: Refuse to run before the publisher role exists
+        env:
+          ROLE: ${{ vars.AWS_IMAGE_PUBLISHER_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE" ]; then
+            echo "::error::AWS_IMAGE_PUBLISHER_ROLE_ARN is not set (munaxa-platform infra/aws, gate G2)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Assume the image publisher role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
+        with:
+          role-to-assume: ${{ vars.AWS_IMAGE_PUBLISHER_ROLE_ARN }}
+          role-session-name: gha-publish-${{ github.run_id }}
+          role-duration-seconds: 3600
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: '229251310592'
+
+      - name: Sign in to ECR
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
+
+      # Built and loaded locally first, verified and scanned, and only then pushed: an image with a
+      # HIGH or CRITICAL finding (5a5994f carried CVE-2026-4738) never reaches ECR again.
+      - name: Build (not pushed yet)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: ${{ matrix.target }}
+          push: false
+          load: true
+          provenance: false # a single-platform manifest, so the digest names the image
+          sbom: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ matrix.repository }}:testing-${{ env.SHORT }}
+            ${{ env.REGISTRY }}/${{ matrix.repository }}:testing-sha-${{ env.SHA }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.SHA }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          # The registry credential for @munaxa/* as a BuildKit secret, never a build argument.
+          secrets: |
+            npm_token=${{ secrets.PLATFORM_PACKAGES_TOKEN }}
+
+      - name: Verify and scan before pushing
+        env:
+          REPOSITORY: ${{ matrix.repository }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          REF="$REGISTRY/$REPOSITORY:testing-sha-$SHA"
+          .github/scripts/verify-image.sh "$REF" "$TARGET"
+          # Permanent gate first; only if it fails, the TEMPORARY Testing-only D-SSL exception (expires
+          # 2026-12-01T00:00:00Z). An image accepted this way is Testing-only: the platform stack refuses
+          # every product image in production while the exception exists (infra/aws/stack/dssl-exception.tf).
+          .github/scripts/scan-image-testing.sh "$REF" "identity-$TARGET" image-reports testing
+
+      - name: Keep the SBOM and scan report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: image-reports-${{ matrix.target }}
+          path: image-reports/
+          if-no-files-found: warn
+          retention-days: 400
+
+      - name: Push
+        id: build
+        env:
+          REPOSITORY: ${{ matrix.repository }}
+        run: |
+          set -euo pipefail
+          repo="$REGISTRY/$REPOSITORY"
+          docker push -q "$repo:testing-$SHORT" >/dev/null
+          docker push -q "$repo:testing-sha-$SHA" >/dev/null
+          digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$repo:testing-sha-$SHA" | sed -n "s#^$repo@##p" | head -n1)"
+          printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo "::error::no pushed digest for $repo"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # The exact digest that was pushed, pulled back and checked again. A failure here leaves the
+      # image in ECR (tags are immutable) but marks the release failed, so nobody pins it.
+      - name: Verify the pushed image
+        env:
+          REPOSITORY: ${{ matrix.repository }}
+          TARGET: ${{ matrix.target }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          REF="$REGISTRY/$REPOSITORY@$DIGEST"
+          docker rmi -f "$REGISTRY/$REPOSITORY:testing-sha-$SHA" "$REGISTRY/$REPOSITORY:testing-$SHORT" >/dev/null
+          docker pull -q "$REF" >/dev/null
+          .github/scripts/verify-image.sh "$REF" "$TARGET"
+          {
+            echo "### $REPOSITORY"
+            echo "\`$REF\` from \`$SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
