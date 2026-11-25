@@ -11,13 +11,16 @@
  *   an email link has nowhere else to carry it, and from there it goes into a hidden form field, so
  *   the POST that uses it carries it in a body. Every response is `no-store` and `same-origin` referrers (the
  *   edge sets both), so the page is neither cached nor named in a `Referer` to anything it links.
+ *
+ * They are drawn in the shared Identity frame (`layout.ts`), the same card as the sign-in page.
  */
 
-export type Language = 'en' | 'ar';
+import { type Language, alert, escapeHtml as escape, field, frame } from './layout.js';
+
+export type { Language };
 
 const COPY = {
   en: {
-    dir: 'ltr',
     forgotTitle: 'Reset your password',
     forgotLead:
       'Enter the email address you sign in with. If it belongs to an account, we will send a link to choose a new password.',
@@ -43,7 +46,6 @@ const COPY = {
     signInNow: 'Sign in',
   },
   ar: {
-    dir: 'rtl',
     forgotTitle: 'إعادة تعيين كلمة المرور',
     forgotLead:
       'أدخل البريد الإلكتروني الذي تسجّل به الدخول. إن كان مرتبطًا بحساب فسنرسل رابطًا لاختيار كلمة مرور جديدة.',
@@ -71,48 +73,11 @@ const COPY = {
 
 type Copy = (typeof COPY)[Language];
 
-const escape = (value: string): string =>
-  value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#x27;');
+/** The page's card, inside the shared frame; the body brings its own heading. */
+const shell = (language: Language, title: string, body: string): string =>
+  frame({ language, title, body });
 
-const shell = (language: Language, title: string, body: string): string => `<!doctype html>
-<html lang="${language}" dir="${COPY[language].dir}">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="same-origin">
-<title>${escape(title)}</title>
-<style>
-  :root { color-scheme: light dark; --line: color-mix(in srgb, currentColor 20%, transparent); }
-  * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
-         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; padding: 1.5rem; }
-  main { width: 100%; max-width: 24rem; }
-  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
-  p.lead { margin: 0 0 1.5rem; opacity: .75; font-size: .875rem; }
-  label { display: block; font-size: .875rem; margin: 0 0 .25rem; }
-  input { width: 100%; padding: .625rem .75rem; margin: 0 0 1rem; font: inherit;
-          border: 1px solid var(--line); border-radius: .375rem; background: transparent; color: inherit; }
-  button { width: 100%; padding: .625rem; font: inherit; font-weight: 600; cursor: pointer;
-           border: 1px solid var(--line); border-radius: .375rem; background: transparent; color: inherit; }
-  .note { padding: .75rem; margin: 0 0 1rem; font-size: .875rem; border-radius: .375rem;
-          border: 1px solid var(--line); }
-  a { display: block; margin-top: 1.5rem; font-size: .8125rem; opacity: .8; }
-</style>
-</head>
-<body>
-<main>
-${body}
-</main>
-</body>
-</html>`;
-
-const note = (text: string | undefined): string =>
-  text === undefined ? '' : `<p class="note" role="status">${escape(text)}</p>`;
+const note = (text: string | undefined): string => alert('info', 'status', text);
 
 export type ForgotNotice = 'sent' | 'limited' | 'unavailable' | undefined;
 
@@ -133,22 +98,27 @@ export const forgotPage = (options: {
   return shell(
     options.language,
     copy.forgotTitle,
-    `  <h1>${escape(copy.forgotTitle)}</h1>
-  <p class="lead">${escape(copy.forgotLead)}</p>
+    `  <header>
+    <h1>${escape(copy.forgotTitle)}</h1>
+    <p class="lead">${escape(copy.forgotLead)}</p>
+  </header>
   ${note(text)}
   <form method="post" action="/api/auth/password/forgot">
     <input type="hidden" name="lang" value="${options.language}">
-    <label for="identifier">${escape(copy.identifier)}</label>
-    <input id="identifier" name="identifier" type="email" autocomplete="username" required autofocus>
+    ${field('identifier', copy.identifier, '<input id="identifier" name="identifier" type="email" autocomplete="username" required autofocus>', true)}
     ${
       options.organisationRequired
-        ? `<label for="organisation">${escape(copy.organisation)}</label>
-    <input id="organisation" name="organisation" autocomplete="organization" required>`
+        ? field(
+            'organisation',
+            copy.organisation,
+            '<input id="organisation" name="organisation" autocomplete="organization" required>',
+            true,
+          )
         : ''
     }
     <button type="submit">${escape(copy.send)}</button>
   </form>
-  <a href="/api/auth/login?lang=${options.language}">${escape(copy.signIn)}</a>`,
+  <a class="link" href="/api/auth/login?lang=${options.language}">${escape(copy.signIn)}</a>`,
   );
 };
 
@@ -180,10 +150,8 @@ export const resetPage = (options: {
     <input type="hidden" name="lang" value="${options.language}">
     <input type="hidden" name="organisation" value="${escape(options.organisation)}">
     <input type="hidden" name="token" value="${escape(options.token)}">
-    <label for="password">${escape(copy.password)}</label>
-    <input id="password" name="password" type="password" autocomplete="new-password" required autofocus>
-    <label for="confirm">${escape(copy.confirm)}</label>
-    <input id="confirm" name="confirm" type="password" autocomplete="new-password" required>
+    ${field('password', copy.password, '<input id="password" name="password" type="password" autocomplete="new-password" required autofocus>', true)}
+    ${field('confirm', copy.confirm, '<input id="confirm" name="confirm" type="password" autocomplete="new-password" required>', true)}
     <button type="submit">${escape(copy.save)}</button>
   </form>`,
   );
@@ -196,7 +164,7 @@ export const invalidLinkPage = (language: Language): string => {
     copy.resetTitle,
     `  <h1>${escape(copy.resetTitle)}</h1>
   ${note(copy.invalidLink)}
-  <a href="/api/auth/password/forgot?lang=${language}">${escape(copy.newLink)}</a>`,
+  <a class="link" href="/api/auth/password/forgot?lang=${language}">${escape(copy.newLink)}</a>`,
   );
 };
 
@@ -207,7 +175,7 @@ export const unavailablePage = (language: Language): string => {
     copy.forgotTitle,
     `  <h1>${escape(copy.forgotTitle)}</h1>
   ${note(copy.unavailable)}
-  <a href="/api/auth/login?lang=${language}">${escape(copy.signIn)}</a>`,
+  <a class="link" href="/api/auth/login?lang=${language}">${escape(copy.signIn)}</a>`,
   );
 };
 
@@ -218,6 +186,6 @@ export const donePage = (language: Language): string => {
     copy.doneTitle,
     `  <h1>${escape(copy.doneTitle)}</h1>
   ${note(copy.done)}
-  <a href="/api/auth/login?lang=${language}">${escape(copy.signInNow)}</a>`,
+  <a class="link" href="/api/auth/login?lang=${language}">${escape(copy.signInNow)}</a>`,
   );
 };

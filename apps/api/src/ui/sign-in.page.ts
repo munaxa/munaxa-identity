@@ -14,7 +14,12 @@
  *
  * There is no password in `localStorage`, no token read by script, and no cookie readable by
  * script — the session is `httpOnly` and the response body carries nothing.
+ *
+ * It is drawn in the shared Identity frame (`layout.ts`): the Munaxa Docs sign-in layout in the
+ * Munaxa Group colours.
  */
+
+import { alert, escapeHtml as escape, field, frame } from './layout.js';
 
 export interface SignInPageOptions {
   readonly language: 'en' | 'ar';
@@ -26,9 +31,8 @@ export interface SignInPageOptions {
 
 const COPY = {
   en: {
-    dir: 'ltr',
     title: 'Sign in to Munaxa',
-    lead: 'Munaxa Identity signs you in. Munaxa Work never sees your password.',
+    lead: 'Use your Munaxa account to continue. Only Munaxa Identity sees your password.',
     identifier: 'Email address',
     password: 'Password',
     organisation: 'Organisation',
@@ -42,9 +46,8 @@ const COPY = {
     unavailable: 'Sign-in is temporarily unavailable. Please try again in a moment.',
   },
   ar: {
-    dir: 'rtl',
     title: 'تسجيل الدخول إلى مُناخة',
-    lead: 'هوية مُناخة هي التي تسجّل دخولك. لا يرى تطبيق العمل كلمة المرور إطلاقًا.',
+    lead: 'استخدم حساب مُناخة للمتابعة. هوية مُناخة وحدها ترى كلمة المرور.',
     identifier: 'البريد الإلكتروني',
     password: 'كلمة المرور',
     organisation: 'المؤسسة',
@@ -56,15 +59,6 @@ const COPY = {
     unavailable: 'تسجيل الدخول غير متاح مؤقتًا. يرجى المحاولة بعد قليل.',
   },
 } as const;
-
-/** Escaped everywhere it is interpolated: `returnTo` reaches this from the query string. */
-const escape = (value: string): string =>
-  value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#x27;');
 
 type Copy = (typeof COPY)[keyof typeof COPY];
 
@@ -90,57 +84,45 @@ const messageFor = (error: SignInPageOptions['error'], copy: Copy): string | und
 
 export const signInPage = (options: SignInPageOptions): string => {
   const copy = COPY[options.language];
-  const message = messageFor(options.error, copy);
   const other = options.language === 'en' ? 'ar' : 'en';
 
-  return `<!doctype html>
-<html lang="${options.language}" dir="${copy.dir}">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escape(copy.title)}</title>
-<style>
-  :root { color-scheme: light dark; --line: color-mix(in srgb, currentColor 20%, transparent); }
-  * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
-         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; padding: 1.5rem; }
-  main { width: 100%; max-width: 24rem; }
-  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
-  p.lead { margin: 0 0 1.5rem; opacity: .75; font-size: .875rem; }
-  label { display: block; font-size: .875rem; margin: 0 0 .25rem; }
-  input { width: 100%; padding: .625rem .75rem; margin: 0 0 1rem; font: inherit;
-          border: 1px solid var(--line); border-radius: .375rem; background: transparent; color: inherit; }
-  button { width: 100%; padding: .625rem; font: inherit; font-weight: 600; cursor: pointer;
-           border: 1px solid var(--line); border-radius: .375rem; background: transparent; color: inherit; }
-  .error { padding: .75rem; margin: 0 0 1rem; font-size: .875rem; border-radius: .375rem;
-           border: 1px solid var(--line); }
-  .lang { display: block; margin-top: 1.5rem; font-size: .8125rem; opacity: .7; }
-</style>
-</head>
-<body>
-<main>
-  <h1>${escape(copy.title)}</h1>
-  <p class="lead">${escape(copy.lead)}</p>
-  ${message === undefined ? '' : `<p class="error" role="alert">${escape(message)}</p>`}
-  <form method="post" action="/api/auth/login">
+  return frame({
+    language: options.language,
+    title: copy.title,
+    // `returnTo` reaches this from the query string: escaped where it is an attribute, encoded
+    // where it is part of a URL.
+    languageSwitch: { href: `?lang=${other}&amp;returnTo=${encodeURIComponent(options.returnTo)}` },
+    body: `    <header>
+      <h1>${escape(copy.title)}</h1>
+      <p class="lead">${escape(copy.lead)}</p>
+    </header>
+    ${alert('danger', 'alert', messageFor(options.error, copy))}
+    <form method="post" action="/api/auth/login">
     <input type="hidden" name="returnTo" value="${escape(options.returnTo)}">
     <input type="hidden" name="lang" value="${options.language}">
-    <label for="identifier">${escape(copy.identifier)}</label>
-    <input id="identifier" name="identifier" type="email" autocomplete="username" required autofocus>
-    <label for="password">${escape(copy.password)}</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    ${field(
+      'identifier',
+      copy.identifier,
+      '<input id="identifier" name="identifier" type="email" autocomplete="username" required autofocus>',
+      true,
+    )}
+    ${field(
+      'password',
+      copy.password,
+      '<input id="password" name="password" type="password" autocomplete="current-password" required>',
+      true,
+    )}
     ${
       options.organisationRequired
-        ? `<label for="organisation">${escape(copy.organisation)}</label>
-    <input id="organisation" name="organisation" autocomplete="organization" required>`
+        ? field(
+            'organisation',
+            copy.organisation,
+            '<input id="organisation" name="organisation" autocomplete="organization" spellcheck="false" required>',
+            true,
+          )
         : ''
     }
     <button type="submit">${escape(copy.submit)}</button>
-  </form>
-  <a class="lang" href="?lang=${other}&amp;returnTo=${encodeURIComponent(options.returnTo)}">${
-    other === 'ar' ? 'العربية' : 'English'
-  }</a>
-</main>
-</body>
-</html>`;
+    </form>`,
+  });
 };
