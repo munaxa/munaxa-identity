@@ -66,6 +66,7 @@ export class AuthController {
     @Query('lang') language: string | undefined,
     @Query('returnTo') returnTo: string | undefined,
     @Query('error') error: string | undefined,
+    @Query('organisation') organisation: string | undefined,
     @Res() response: Response,
   ): void {
     withPageCsp(response)
@@ -77,6 +78,10 @@ export class AuthController {
           returnTo: safeReturnTo(returnTo),
           error: knownError(error),
           organisationRequired: !this.auth.hasDefaultOrganisation,
+          organisation:
+            organisation !== undefined && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(organisation)
+              ? organisation
+              : undefined,
           companySignIn: this.auth.companySignInEnabled,
         }),
       );

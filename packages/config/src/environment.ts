@@ -22,6 +22,7 @@ import {
 import { PASSWORD_RECOVERY_FIELDS, passwordRecoveryIssues } from './password-recovery.js';
 import { parseMfaKeys, reusesSecret } from './mfa-keys.js';
 import { redactRedisUrl, redisUrlIssues } from './redis-url.js';
+import { OIDC_PROVIDER_FIELDS, oidcProviderIssues } from './oidc-provider.js';
 import { SSO_FIELDS, ssoIssues } from './sso.js';
 
 /**
@@ -246,6 +247,8 @@ export const IDENTITY_SCHEMA = extendConfig(
 
     /** Company sign-in with Microsoft Entra ID or Google Workspace; see `sso.ts`. */
     ...SSO_FIELDS,
+    /** Identity as the OIDC provider for Docs and School; see `oidc-provider.ts`. */
+    ...OIDC_PROVIDER_FIELDS,
   },
   {
     refine: (resolved) => {
@@ -307,6 +310,7 @@ export const IDENTITY_SCHEMA = extendConfig(
       }
       issues.push(...passwordRecoveryIssues(resolved));
       issues.push(...ssoIssues(resolved));
+      issues.push(...oidcProviderIssues(resolved));
       return issues;
     },
   },

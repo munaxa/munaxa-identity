@@ -66,6 +66,9 @@ export const PASSWORD_ROUTES: ReadonlySet<string> = new Set([
 export const SSO_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['/api/auth/sso/start', new Set(['POST'])],
   ['/api/auth/sso/callback', new Set(['GET'])],
+  // Identity as an OIDC provider: a code for an id token, and the browser leg that issues codes.
+  ['/api/auth/oidc/token', new Set(['POST'])],
+  ['/api/auth/oidc/authorize', new Set(['GET'])],
 ]);
 
 /** Routes that check a second factor or a password inside a session, each with its method. */

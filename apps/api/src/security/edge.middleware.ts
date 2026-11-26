@@ -47,9 +47,13 @@ import type { IdentityEnvironment } from '@identity/config';
  * `CORRELATION` is set before anything else so a rejection at the edge is still traceable: a 429
  * with no correlation id is a support ticket nobody can answer.
  */
+/** The one route a product calls server to server: no browser, no cookie, no Origin. */
+const OIDC_TOKEN_ROUTE = '/api/auth/oidc/token';
+
 @Injectable()
 export class EdgeMiddleware implements NestMiddleware {
   private readonly pipeline: ReturnType<typeof securityPipeline>;
+  private readonly serverToServer: ReturnType<typeof securityPipeline>;
   /**
    * Edge events precede any organisation — a rate limit fires before authentication, an origin
    * rejection before a session is resolved — so they are recorded against the platform's reserved
@@ -61,28 +65,36 @@ export class EdgeMiddleware implements NestMiddleware {
     @Inject(SECURITY_STACK) private readonly security: SecurityStack,
     @Inject(ENVIRONMENT) private readonly environment: IdentityEnvironment,
   ) {
-    this.pipeline = securityPipeline({
-      rateLimiter: security.rateLimiter,
-      trustedOrigins: [...environment.MUNAXA_TRUSTED_ORIGINS],
-      apiOnly: true,
-      scanBodies: true,
-      onEvent: (event) => {
-        // Reported, never fatal. An audit sink that rejects must not take an authentication
-        // service down with it — an unhandled rejection here would do exactly that, and the
-        // outage would be caused by the machinery that exists to record outages.
-        void this.security.audit
-          .write(
-            anonymousAuditEvent(this.edgeTenant, toCorrelationId(randomUUID()), {
-              name: event.name,
-              outcome: 'failure',
-              ...(event.detail === undefined ? {} : { payload: event.detail }),
-            }),
-          )
-          .catch((error: unknown) => {
-            process.stderr.write(`[identity] edge audit write failed: ${String(error)}\n`);
-          });
-      },
-    });
+    const pipelineFor = (trustedOrigins: readonly string[]) =>
+      securityPipeline({
+        rateLimiter: security.rateLimiter,
+        trustedOrigins: [...trustedOrigins],
+        apiOnly: true,
+        scanBodies: true,
+        onEvent: (event) => {
+          // Reported, never fatal. An audit sink that rejects must not take an authentication
+          // service down with it — an unhandled rejection here would do exactly that, and the
+          // outage would be caused by the machinery that exists to record outages.
+          void this.security.audit
+            .write(
+              anonymousAuditEvent(this.edgeTenant, toCorrelationId(randomUUID()), {
+                name: event.name,
+                outcome: 'failure',
+                ...(event.detail === undefined ? {} : { payload: event.detail }),
+              }),
+            )
+            .catch((error: unknown) => {
+              process.stderr.write(`[identity] edge audit write failed: ${String(error)}\n`);
+            });
+        },
+      });
+    this.pipeline = pipelineFor(environment.MUNAXA_TRUSTED_ORIGINS);
+    // The OIDC token endpoint (ADR-0008) is called server to server by a product, with no Origin
+    // header and no cookie: the client authenticates with its secret, and nothing a browser holds is
+    // read. The origin check exists to stop a browser's cookies being ridden cross-site, so it has
+    // nothing to protect here and would refuse every legitimate call. Everything else (headers, body
+    // scanning, the per-address limit below) still applies.
+    this.serverToServer = pipelineFor([]);
   }
 
   public async use(request: Request, response: Response, next: NextFunction): Promise<void> {
@@ -102,7 +114,9 @@ export class EdgeMiddleware implements NestMiddleware {
     };
 
     const platformResponse = emptyResponse();
-    const short = await this.pipeline(platformRequest, platformResponse);
+    const pipeline =
+      request.method === 'POST' && route === OIDC_TOKEN_ROUTE ? this.serverToServer : this.pipeline;
+    const short = await pipeline(platformRequest, platformResponse);
 
     for (const [name, value] of Object.entries(platformResponse.headers)) {
       response.setHeader(name, value);

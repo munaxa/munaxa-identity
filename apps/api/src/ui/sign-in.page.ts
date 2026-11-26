@@ -28,6 +28,11 @@ export interface SignInPageOptions {
   readonly error?:
     'invalid' | 'locked' | 'mfa' | 'password-policy' | 'unavailable' | 'sso' | undefined;
   readonly organisationRequired: boolean;
+  /**
+   * Prefills the organisation field, when a product sent the person here for a known organisation
+   * (Identity as an OIDC provider, ADR-0008). Only ever a validated organisation key shape.
+   */
+  readonly organisation?: string | undefined;
   /** Whether company sign-in is enabled on this deployment; adds the "company account" link. */
   readonly companySignIn?: boolean;
 }
@@ -128,7 +133,9 @@ export const signInPage = (options: SignInPageOptions): string => {
         ? field(
             'organisation',
             copy.organisation,
-            '<input id="organisation" name="organisation" autocomplete="organization" spellcheck="false" required>',
+            `<input id="organisation" name="organisation" autocomplete="organization" spellcheck="false" required${
+              options.organisation === undefined ? '' : ` value="${escape(options.organisation)}"`
+            }>`,
             true,
           )
         : ''
