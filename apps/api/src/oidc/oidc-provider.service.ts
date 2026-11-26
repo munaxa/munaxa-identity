@@ -282,12 +282,25 @@ export class OidcProviderService {
       const decoded = Buffer.from(authorization.slice(6), 'base64').toString('utf8');
       const at = decoded.indexOf(':');
       if (at < 0) return { ok: false, status: 401, error: 'invalid_client' };
-      const basicId = decodeURIComponent(decoded.slice(0, at));
+      // RFC 6749 §2.3.1: both halves are form-urlencoded, so `+` is a space. A malformed escape is
+      // an unauthenticated client, not a server error.
+      const formDecode = (value: string): string | undefined => {
+        try {
+          return decodeURIComponent(value.replace(/\+/g, ' '));
+        } catch {
+          return undefined;
+        }
+      };
+      const basicId = formDecode(decoded.slice(0, at));
+      const basicSecret = formDecode(decoded.slice(at + 1));
+      if (basicId === undefined || basicSecret === undefined) {
+        return { ok: false, status: 401, error: 'invalid_client' };
+      }
       if (clientId !== undefined && clientId !== basicId) {
         return { ok: false, status: 400, error: 'invalid_request' };
       }
       clientId = basicId;
-      secret = decodeURIComponent(decoded.slice(at + 1));
+      secret = basicSecret;
     }
     const client = this.clients.find((candidate) => candidate.clientId === clientId);
     if (client === undefined || secret === undefined || !sameSecret(secret, client.secret)) {

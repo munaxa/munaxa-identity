@@ -33,6 +33,17 @@ Docs and School sign people in by pointing their relying-party code at it.
 - Codes: single use, one minute, bound to client, redirect URI, nonce and PKCE; the person's
   session and account are re-checked when the code is redeemed.
 
+### Review notes (26 Nov 2026)
+
+- `email_verified` is `true` because every Identity identifier is an address an operator
+  provisioned (or a company directory asserted, ADR-0007); there is no self-registration. Clients
+  must still key a person on `sub` together with `tid`/`org`, and use the address only to link a
+  pre-created product account the first time.
+- PKCE is enforced when sent and not yet required: Docs' relying party predates it. Requiring S256
+  for every client is the next step once Docs sends it.
+- `prompt=login` and `max_age` are not implemented; a client needing a fresh sign-in cannot ask for
+  one yet.
+
 ## Consequences
 
 - One Munaxa sign-in (password, MFA, lockout, Microsoft/Google company sign-in from ADR-0007) for

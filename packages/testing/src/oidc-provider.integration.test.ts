@@ -341,6 +341,15 @@ describe('the token leg', () => {
     expect(response.status).toBe(200);
   });
 
+  it('answers a malformed Basic header with invalid_client, not a server error', async () => {
+    const response = await redeem(
+      { grant_type: 'authorization_code', code: 'x'.repeat(43), redirect_uri: REDIRECT },
+      `Basic ${Buffer.from('%E0%A4%A:secret').toString('base64')}`,
+    );
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'invalid_client' });
+  });
+
   it('redeems a code once only', async () => {
     const someone = await person();
     const { code } = await codeFrom(await sessionFor(someone.identifier));
