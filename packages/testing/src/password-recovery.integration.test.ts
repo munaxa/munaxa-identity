@@ -149,9 +149,13 @@ const asOwner = async <T>(tenantId: string, sql: string, params: unknown[]): Pro
 
 const accountRow = async (userId: UserId, tenantId: TenantId = tenant) =>
   (
-    await asOwner<{ password_hash: string; token_version: number }>(
+    await asOwner<{
+      password_hash: string;
+      token_version: number;
+      email_verified_at: Date | null;
+    }>(
       tenantId,
-      'select password_hash, token_version from identity_account where id = $1',
+      'select password_hash, token_version, email_verified_at from identity_account where id = $1',
       [userId],
     )
   )[0]!;
@@ -479,6 +483,8 @@ describe('completing a reset', () => {
     const row = await accountRow(known.userId);
     expect(await defaultPasswordHasher.verify(NEW_PASSWORD, row.password_hash)).toBe(true);
     expect(row.token_version).toBe(2);
+    // The link reached the mailbox and came back: the address is now checked.
+    expect(row.email_verified_at).not.toBeNull();
     for (const signedIn of [first, second]) {
       expect((await stack.sessions.validate(tenant, signedIn.sessionId)).valid).toBe(false);
       await expect(stack.refreshTokens.rotate(tenant, signedIn.refresh)).rejects.toThrow();

@@ -168,6 +168,71 @@ export const mfaReset = async (
 };
 
 // -------------------------------------------------------------------------------------------------
+// account-email-verified: record that a Munaxa operator confirmed the address
+// -------------------------------------------------------------------------------------------------
+
+/**
+ * Record that a Munaxa operator confirmed this account's email address belongs to the person (for
+ * example by writing to it and hearing back, or by meeting them). Docs and School find their user
+ * by the address in Identity's id token and only trust a checked one, so a local account needs
+ * this, or a used recovery link, before it can sign in to them. A company sign-in account is
+ * checked by its directory and does not need it. Idempotent; the first confirmation is kept.
+ */
+export const accountEmailVerified = async (
+  deps: OperatorDeps,
+  input: {
+    readonly organisation?: string | undefined;
+    readonly account?: string | undefined;
+    readonly accountId?: string | undefined;
+    readonly reference?: string | undefined;
+    readonly apply: boolean;
+  },
+): Promise<{ readonly accountId: UserId; readonly applied: boolean }> => {
+  const tenantId = await tenantOf(deps, input.organisation);
+  const account = await accountOf(deps, tenantId, input);
+  const userId = account.userId;
+  const row = await deps.prisma.withTenant(tenantId, (tx) =>
+    tx.identityAccount.findFirst({
+      where: { tenantId, id: userId },
+      select: { emailVerifiedAt: true },
+    }),
+  );
+  const already = row?.emailVerifiedAt != null;
+  if (!input.apply) {
+    deps.out(`dry run: account ${userId} email checked=${already}; nothing changed (add --apply)`);
+    return { accountId: userId, applied: false };
+  }
+  const reference = requireReference(input.reference);
+  if (account.status === 'disabled') {
+    throw new OperatorError('That account is disabled; enable it before confirming its address');
+  }
+  await deps.prisma.withTenant(tenantId, (tx) =>
+    tx.identityAccount.updateMany({
+      where: { tenantId, id: userId, emailVerifiedAt: null },
+      data: {
+        emailVerifiedAt: (deps.now ?? (() => new Date()))(),
+        updatedBy: `operator:${reference}`,
+      },
+    }),
+  );
+  await deps.security.audit
+    .write(
+      anonymousAuditEvent(tenantId, toCorrelationId(randomUUID()), {
+        name: 'auth.provider.linked',
+        outcome: 'success',
+        actor: operatorActor(reference),
+        target: { type: 'account', id: userId },
+        payload: { stage: 'email-confirmed', method: 'operator', reference, already },
+      }),
+    )
+    .catch((error: unknown) => {
+      deps.out(`warning: the audit record could not be written: ${String(error)}`);
+    });
+  deps.out(`applied: account ${userId} email recorded as checked, reference ${reference}`);
+  return { accountId: userId, applied: true };
+};
+
+// -------------------------------------------------------------------------------------------------
 // account-disable: the containment step
 // -------------------------------------------------------------------------------------------------
 

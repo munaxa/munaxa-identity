@@ -327,6 +327,14 @@ export class PasswordRecovery {
           });
         }
         await this.#reset.complete(tenantId, input.token, input.password);
+        // The link reached this person's mailbox and came back: the address is theirs. Docs and
+        // School find their user by it, so the id token may now say it is checked.
+        await this.#options.prisma.withTenant(tenantId, (tx) =>
+          tx.identityAccount.updateMany({
+            where: { tenantId, id: ticket.userId, emailVerifiedAt: null },
+            data: { emailVerifiedAt: new Date() },
+          }),
+        );
       });
     } catch (error) {
       if (isPlatformError(error) && error.code === 'AUTH_RESET_TOKEN_INVALID') {

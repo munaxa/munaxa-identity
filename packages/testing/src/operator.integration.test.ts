@@ -17,6 +17,7 @@ import {
 import {
   OperatorError,
   accountDisable,
+  accountEmailVerified,
   mfaReencrypt,
   mfaReset,
   revokeUnsatisfiedSessions,
@@ -431,6 +432,47 @@ describe('account-disable (containment)', () => {
     );
     expect(row?.status).toBe('disabled');
     expect((await login(a, who.email)).ok).toBe(false);
+  });
+});
+
+describe('account-email-verified (an operator confirmed the address)', () => {
+  it('records the confirmation once, with a reference, and changes nothing on a dry run', async () => {
+    const who = await enrolled();
+    const checked = async () =>
+      (
+        await asOwner<{ email_verified_at: Date | null }>(
+          'select email_verified_at from identity_account where id = $1',
+          [who.id],
+        )
+      )[0]?.email_verified_at ?? null;
+    expect(
+      (
+        await accountEmailVerified(deps(a), {
+          organisation: org.key,
+          accountId: who.id,
+          apply: false,
+        })
+      ).applied,
+    ).toBe(false);
+    expect(await checked()).toBeNull();
+    await expect(
+      accountEmailVerified(deps(a), { organisation: org.key, accountId: who.id, apply: true }),
+    ).rejects.toBeInstanceOf(OperatorError);
+    await accountEmailVerified(deps(a), {
+      organisation: org.key,
+      accountId: who.id,
+      reference: 'TKT-501',
+      apply: true,
+    });
+    const first = await checked();
+    expect(first).not.toBeNull();
+    await accountEmailVerified(deps(a), {
+      organisation: org.key,
+      accountId: who.id,
+      reference: 'TKT-502',
+      apply: true,
+    });
+    expect((await checked())?.getTime()).toBe(first?.getTime());
   });
 });
 

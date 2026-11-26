@@ -93,6 +93,10 @@ model IdentityAccount {
   identitySource       IdentitySource @default(local) @map("identity_source")
   externalId           String?        @map("external_id")
   identityProviderId   String?        @map("identity_provider_id") @db.Uuid
+  /// When this address was shown to belong to the person: a completed recovery link, or a Munaxa
+  /// operator's recorded confirmation. Null means nobody has checked it. A federated account bound
+  /// to its company directory is checked by that directory instead (see `emailVerified`).
+  emailVerifiedAt      DateTime?      @map("email_verified_at") @db.Timestamptz(6)
   createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   createdBy            String?        @map("created_by")
   updatedAt            DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
