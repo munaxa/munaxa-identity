@@ -7,3 +7,5 @@
 export const ENVIRONMENT = Symbol('identity.environment');
 export const SECURITY_STACK = Symbol('identity.securityStack');
 export const LOGGER = Symbol('identity.logger');
+/** Company sign-in's provider catalogue and HTTP client; the default when nothing is bound. */
+export const SSO_OPTIONS = Symbol('identity.ssoOptions');

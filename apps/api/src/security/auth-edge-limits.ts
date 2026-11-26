@@ -57,6 +57,17 @@ export const PASSWORD_ROUTES: ReadonlySet<string> = new Set([
   '/api/auth/password/forgot',
   '/api/auth/password/reset',
 ]);
+/**
+ * Company sign-in: starting one (a cache write and a redirect) and finishing one (a token exchange
+ * with Microsoft or Google). Counted per address under the sign-in budget's size: both are steps of
+ * a sign-in, and the callback makes an outbound request this service must not be made to repeat
+ * without limit.
+ */
+export const SSO_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['/api/auth/sso/start', new Set(['POST'])],
+  ['/api/auth/sso/callback', new Set(['GET'])],
+]);
+
 /** Routes that check a second factor or a password inside a session, each with its method. */
 export const MFA_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['/api/auth/mfa/verify', new Set(['POST'])],
@@ -91,6 +102,8 @@ export const isPasswordReset = (method: string, route: string): boolean =>
   isMethod(method, 'POST') && PASSWORD_ROUTES.has(route);
 export const isMfa = (method: string, route: string): boolean =>
   MFA_ROUTES.get(route)?.has(method.toUpperCase()) === true;
+export const isSso = (method: string, route: string): boolean =>
+  SSO_ROUTES.get(route)?.has(method.toUpperCase()) === true;
 
 export const authEdgeRules = (policy: AuthEdgePolicy): RateLimitRule[] => [
   // Per identifier first: a refusal here stops before the address is charged.
@@ -104,6 +117,13 @@ export const authEdgeRules = (policy: AuthEdgePolicy): RateLimitRule[] => [
   {
     id: 'login-per-ip',
     match: (target) => isLogin(target.method, target.path),
+    dimension: 'ip',
+    limit: policy.loginPerIp,
+    window: 5 * MINUTE,
+  },
+  {
+    id: 'sso-per-ip',
+    match: (target) => isSso(target.method, target.path),
     dimension: 'ip',
     limit: policy.loginPerIp,
     window: 5 * MINUTE,

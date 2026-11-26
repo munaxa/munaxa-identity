@@ -25,8 +25,11 @@ export interface SignInPageOptions {
   readonly language: 'en' | 'ar';
   readonly returnTo: string;
   /** Present only after a failed attempt. Every credential failure produces the same one. */
-  readonly error?: 'invalid' | 'locked' | 'mfa' | 'password-policy' | 'unavailable' | undefined;
+  readonly error?:
+    'invalid' | 'locked' | 'mfa' | 'password-policy' | 'unavailable' | 'sso' | undefined;
   readonly organisationRequired: boolean;
+  /** Whether company sign-in is enabled on this deployment; adds the "company account" link. */
+  readonly companySignIn?: boolean;
 }
 
 const COPY = {
@@ -44,6 +47,9 @@ const COPY = {
     // Deliberately says nothing about which part is unwell, and deliberately does not blame the
     // person's details — this is the one message on the page that is not about their credentials.
     unavailable: 'Sign-in is temporarily unavailable. Please try again in a moment.',
+    or: 'or',
+    company: 'Sign in with Microsoft or Google',
+    sso: 'Sign-in with your company account could not be completed. Try again, or ask your administrator.',
   },
   ar: {
     title: 'تسجيل الدخول إلى مُناخة',
@@ -57,6 +63,9 @@ const COPY = {
     mfa: 'يحتاج هذا الحساب إلى عامل ثانٍ غير متاح على هذا النشر حاليًا.',
     policy: 'يجب تغيير كلمة المرور قبل استخدام هذا الحساب.',
     unavailable: 'تسجيل الدخول غير متاح مؤقتًا. يرجى المحاولة بعد قليل.',
+    or: 'أو',
+    company: 'تسجيل الدخول عبر Microsoft أو Google',
+    sso: 'تعذّر إكمال تسجيل الدخول بحساب مؤسستك. حاول مرة أخرى أو تواصل مع المسؤول.',
   },
 } as const;
 
@@ -77,6 +86,8 @@ const messageFor = (error: SignInPageOptions['error'], copy: Copy): string | und
       return copy.policy;
     case 'unavailable':
       return copy.unavailable;
+    case 'sso':
+      return copy.sso;
     default:
       return undefined;
   }
@@ -123,6 +134,12 @@ export const signInPage = (options: SignInPageOptions): string => {
         : ''
     }
     <button type="submit">${escape(copy.submit)}</button>
-    </form>`,
+    </form>${
+      options.companySignIn === true
+        ? `
+    <p class="divider">${escape(copy.or)}</p>
+    <a class="button secondary" href="/api/auth/sso?lang=${options.language}&amp;returnTo=${encodeURIComponent(options.returnTo)}">${escape(copy.company)}</a>`
+        : ''
+    }`,
   });
 };

@@ -22,6 +22,7 @@ import {
 import { PASSWORD_RECOVERY_FIELDS, passwordRecoveryIssues } from './password-recovery.js';
 import { parseMfaKeys, reusesSecret } from './mfa-keys.js';
 import { redactRedisUrl, redisUrlIssues } from './redis-url.js';
+import { SSO_FIELDS, ssoIssues } from './sso.js';
 
 /**
  * Identity's environment contract.
@@ -242,6 +243,9 @@ export const IDENTITY_SCHEMA = extendConfig(
 
     /** Password recovery and email delivery; see `password-recovery.ts`. */
     ...PASSWORD_RECOVERY_FIELDS,
+
+    /** Company sign-in with Microsoft Entra ID or Google Workspace; see `sso.ts`. */
+    ...SSO_FIELDS,
   },
   {
     refine: (resolved) => {
@@ -302,6 +306,7 @@ export const IDENTITY_SCHEMA = extendConfig(
         }
       }
       issues.push(...passwordRecoveryIssues(resolved));
+      issues.push(...ssoIssues(resolved));
       return issues;
     },
   },

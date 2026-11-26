@@ -97,6 +97,10 @@ const STYLES = `
           padding: 0 1rem; font: inherit; font-size: .875rem; font-weight: 500; cursor: pointer; text-decoration: none;
           border: 0; border-radius: .375rem; background: var(--primary); color: var(--primary-foreground); }
   button:hover, .button:hover { background: var(--primary-hover); }
+  .button.secondary { background: transparent; color: var(--foreground); border: 1px solid var(--input); }
+  .button.secondary:hover { background: var(--background); }
+  .divider { display: flex; align-items: center; gap: .75rem; font-size: .75rem; color: var(--muted-foreground); }
+  .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
   .alert { padding: 1rem; font-size: .875rem; border-radius: .5rem; border: 1px solid; }
   .alert.danger { border-color: rgb(239 68 68 / .3); background: rgb(239 68 68 / .1); }
   .alert.info { border-color: rgb(14 165 233 / .3); background: rgb(14 165 233 / .1); }

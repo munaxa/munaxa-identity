@@ -77,6 +77,7 @@ export class AuthController {
           returnTo: safeReturnTo(returnTo),
           error: knownError(error),
           organisationRequired: !this.auth.hasDefaultOrganisation,
+          companySignIn: this.auth.companySignInEnabled,
         }),
       );
   }
@@ -266,12 +267,13 @@ const reasonCode = (failure: LoginFailure): string => {
 
 const knownError = (
   value: string | undefined,
-): 'invalid' | 'locked' | 'mfa' | 'password-policy' | 'unavailable' | undefined =>
+): 'invalid' | 'locked' | 'mfa' | 'password-policy' | 'unavailable' | 'sso' | undefined =>
   value === 'invalid' ||
   value === 'locked' ||
   value === 'mfa' ||
   value === 'password-policy' ||
-  value === 'unavailable'
+  value === 'unavailable' ||
+  value === 'sso'
     ? value
     : undefined;
 
