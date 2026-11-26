@@ -30,6 +30,7 @@ import {
   type MfaRefusal,
   type RequestContext,
 } from './mfa-flow.service.js';
+import { PAGE_CSP } from '../ui/layout.js';
 
 /**
  * The MFA API.
@@ -293,7 +294,11 @@ export class MfaController {
   private page(response: Response, status: number, options: MfaPageOptions): void {
     response.setHeader('cache-control', 'no-store');
     response.setHeader('referrer-policy', 'same-origin');
-    response.status(status).type('html').send(mfaPage(options));
+    response
+      .status(status)
+      .type('html')
+      .set('content-security-policy', PAGE_CSP)
+      .send(mfaPage(options));
   }
 
   /**

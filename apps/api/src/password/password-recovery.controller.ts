@@ -17,6 +17,7 @@ import {
   type Language,
 } from '../ui/password-recovery.page.js';
 import type { PasswordRecovery } from './password-recovery.js';
+import { PAGE_CSP } from '../ui/layout.js';
 
 /**
  * The password-recovery API and pages.
@@ -62,12 +63,17 @@ export class PasswordRecoveryController {
       return;
     }
     if (this.recovery.availability === 'unavailable') {
-      response.status(503).type('html').send(unavailablePage(language));
+      response
+        .status(503)
+        .type('html')
+        .set('content-security-policy', PAGE_CSP)
+        .send(unavailablePage(language));
       return;
     }
     response
       .status(200)
       .type('html')
+      .set('content-security-policy', PAGE_CSP)
       .send(
         forgotPage({
           language,
@@ -100,7 +106,11 @@ export class PasswordRecoveryController {
       case 'unavailable':
         response.setHeader('retry-after', '60');
         if (form) {
-          response.status(503).type('html').send(unavailablePage(language));
+          response
+            .status(503)
+            .type('html')
+            .set('content-security-policy', PAGE_CSP)
+            .send(unavailablePage(language));
           return;
         }
         response.status(503).json({ code: 'AUTH_RESET_UNAVAILABLE' });
@@ -151,7 +161,11 @@ export class PasswordRecoveryController {
         response.status(503).json({ code: 'AUTH_RESET_UNAVAILABLE' });
         return;
       }
-      response.status(503).type('html').send(unavailablePage(language));
+      response
+        .status(503)
+        .type('html')
+        .set('content-security-policy', PAGE_CSP)
+        .send(unavailablePage(language));
       return;
     }
     if (json) {
@@ -159,12 +173,17 @@ export class PasswordRecoveryController {
       return;
     }
     if (state === 'invalid') {
-      response.status(200).type('html').send(invalidLinkPage(language));
+      response
+        .status(200)
+        .type('html')
+        .set('content-security-policy', PAGE_CSP)
+        .send(invalidLinkPage(language));
       return;
     }
     response
       .status(200)
       .type('html')
+      .set('content-security-policy', PAGE_CSP)
       .send(resetPage({ language, organisation, token: token ?? '' }));
   }
 
@@ -185,6 +204,7 @@ export class PasswordRecoveryController {
       response
         .status(400)
         .type('html')
+        .set('content-security-policy', PAGE_CSP)
         .send(resetPage({ language, organisation, token, error: 'mismatch' }));
       return;
     }
@@ -203,14 +223,22 @@ export class PasswordRecoveryController {
         // Clearing the cookies is housekeeping, not security: the server already refuses them.
         clearSessionCookies(response);
         if (form) {
-          response.status(200).type('html').send(donePage(language));
+          response
+            .status(200)
+            .type('html')
+            .set('content-security-policy', PAGE_CSP)
+            .send(donePage(language));
           return;
         }
         response.status(200).json({ ok: true });
         return;
       case 'invalid-token':
         if (form) {
-          response.status(400).type('html').send(invalidLinkPage(language));
+          response
+            .status(400)
+            .type('html')
+            .set('content-security-policy', PAGE_CSP)
+            .send(invalidLinkPage(language));
           return;
         }
         response.status(400).json({ code: 'AUTH_RESET_TOKEN_INVALID' });
@@ -220,6 +248,7 @@ export class PasswordRecoveryController {
           response
             .status(422)
             .type('html')
+            .set('content-security-policy', PAGE_CSP)
             .send(
               resetPage({
                 language,
@@ -241,6 +270,7 @@ export class PasswordRecoveryController {
           response
             .status(503)
             .type('html')
+            .set('content-security-policy', PAGE_CSP)
             .send(resetPage({ language, organisation, token, error: 'unavailable' }));
           return;
         }

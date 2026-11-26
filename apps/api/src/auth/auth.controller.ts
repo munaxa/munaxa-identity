@@ -14,6 +14,7 @@ import {
   issueChallengeCookie,
   issueCookies,
 } from './cookies.js';
+import { PAGE_CSP } from '../ui/layout.js';
 
 /**
  * The authentication API.
@@ -70,6 +71,7 @@ export class AuthController {
     response
       .status(200)
       .type('html')
+      .set('content-security-policy', PAGE_CSP)
       .send(
         signInPage({
           language: language === 'ar' ? 'ar' : 'en',
