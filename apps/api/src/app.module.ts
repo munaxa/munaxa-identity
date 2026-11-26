@@ -23,6 +23,8 @@ import { buildSecurityStack, type SecurityStack } from './platform/security.js';
 import { createLogger } from './observability/logger.js';
 import { RequestLogMiddleware } from './observability/request-log.middleware.js';
 import { EdgeMiddleware } from './security/edge.middleware.js';
+import { OidcProviderController } from './oidc/oidc-provider.controller.js';
+import { OidcProviderService } from './oidc/oidc-provider.service.js';
 import { SsoController } from './sso/sso.controller.js';
 import { SsoService } from './sso/sso.service.js';
 import { ENVIRONMENT, LOGGER, SECURITY_STACK } from './tokens.js';
@@ -44,6 +46,7 @@ import { ENVIRONMENT, LOGGER, SECURITY_STACK } from './tokens.js';
     PasswordRecoveryController,
     PasswordChangeController,
     SsoController,
+    OidcProviderController,
   ],
   providers: [
     PrismaService,
@@ -51,6 +54,7 @@ import { ENVIRONMENT, LOGGER, SECURITY_STACK } from './tokens.js';
     MfaFlowService,
     AccountSessionsService,
     SsoService,
+    OidcProviderService,
     EdgeMiddleware,
     RequestLogMiddleware,
     { provide: ENVIRONMENT, useFactory: (): IdentityEnvironment => loadEnvironment() },
