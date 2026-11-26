@@ -28,7 +28,9 @@ CREATE TABLE "identity_sso_connection" (
     -- A Microsoft tenant id is a GUID; a Google directory is a lower-case DNS name. Anything else
     -- is a typo that would otherwise only show up as a sign-in nobody can complete.
     CONSTRAINT "ck_identity_sso_connection_directory" CHECK (
-        ("provider" = 'microsoft' AND "directory_id" ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+        ("provider" = 'microsoft' AND "directory_id" ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            -- Never the consumer tenant, through which every personal Microsoft account signs in.
+            AND "directory_id" <> '9188040d-6c67-4c5b-b112-36a304b66dad')
         OR ("provider" = 'google' AND "directory_id" ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$')
     )
 );

@@ -1059,6 +1059,28 @@ describe('operator commands', () => {
     ).rejects.toThrow(/break-glass/);
   });
 
+  it('refuses the Microsoft consumer tenant, in the command and in the database', async () => {
+    await expect(
+      ssoConnectionAdd(deps(), {
+        organisation: other.key,
+        provider: 'microsoft',
+        directory: '9188040d-6c67-4c5b-b112-36a304b66dad',
+        domains: `consumer-${run}.example`,
+        trustProviderMfa: false,
+        reference: 'TEST-4',
+        apply: true,
+      }),
+    ).rejects.toThrow(/consumer tenant/);
+    await expect(
+      asOwner(
+        other.id,
+        `insert into identity_sso_connection (id, tenant_id, provider, directory_id)
+         values ($1, $2, 'microsoft', '9188040d-6c67-4c5b-b112-36a304b66dad')`,
+        [randomUUID(), other.id],
+      ),
+    ).rejects.toThrow(/ck_identity_sso_connection_directory/);
+  });
+
   it('refuses public email domains and a domain another connection already owns', async () => {
     await expect(
       ssoConnectionAdd(deps(), {

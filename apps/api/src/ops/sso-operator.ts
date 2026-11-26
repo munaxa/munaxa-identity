@@ -59,6 +59,9 @@ const requireReference = (reference: string | undefined): string => {
 
 const actor = (reference: string) => ({ kind: 'system' as const, id: `operator:${reference}` });
 
+/** Microsoft's tenant for personal accounts (outlook.com, hotmail.com, live.com). */
+const MICROSOFT_CONSUMER_TENANT = '9188040d-6c67-4c5b-b112-36a304b66dad';
+
 const tenantOf = async (
   deps: OperatorDeps,
   organisation: string | undefined,
@@ -159,6 +162,13 @@ export const ssoConnectionAdd = async (
   if (provider === 'microsoft' && !GUID.test(directory)) {
     throw new OperatorError(
       '--directory must be the company’s Microsoft Entra tenant id (a GUID, from their Entra admin centre overview)',
+    );
+  }
+  // The consumer tenant: every personal Microsoft account signs in through it. A connection to it
+  // would let anyone with an outlook.com or hotmail.com account claim a pre-created address.
+  if (provider === 'microsoft' && directory === MICROSOFT_CONSUMER_TENANT) {
+    throw new OperatorError(
+      '--directory is the Microsoft consumer tenant (personal accounts), not a company directory',
     );
   }
   if (provider === 'google' && !DOMAIN.test(directory)) {
