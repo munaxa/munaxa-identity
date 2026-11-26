@@ -645,6 +645,27 @@ describe('an id token that lies', () => {
       },
     ],
     ['with no object id', { tamper: (c) => ({ ...c, oid: undefined }) }],
+    [
+      'from a B2B guest of the tenant (another company’s user)',
+      { tamper: (c) => ({ ...c, idp: `https://sts.windows.net/${randomUUID()}/` }) },
+    ],
+    [
+      'from a personal Microsoft account invited as a guest',
+      { tamper: (c) => ({ ...c, idp: 'live.com' }) },
+    ],
+    [
+      'from a guest whose UPN is #EXT# and whose email claim is unverified',
+      {
+        tamper: (c) => ({
+          ...c,
+          preferred_username: `victim_gmail.com#EXT#@contoso-${run}.onmicrosoft.com`,
+        }),
+      },
+    ],
+    [
+      'with a UPN outside the domains and an unverified email claim inside them',
+      { tamper: (c) => ({ ...c, preferred_username: `someone@other-${run}.example` }) },
+    ],
   ];
   for (const [name, options] of cases) {
     it(`is refused when ${name}`, async () => {
@@ -656,6 +677,32 @@ describe('an id token that lies', () => {
       expect((await accountRow(id)).external_id).toBeNull();
     });
   }
+});
+
+describe('what an Entra member token may look like', () => {
+  it('accepts an idp naming the tenant itself', async () => {
+    const email = `own-${randomUUID().slice(0, 6)}@${MS_DOMAIN}`;
+    await preCreate(email);
+    const { outcome } = await signIn(email, {
+      oid: randomUUID(),
+      tamper: (c) => ({ ...c, idp: `https://sts.windows.net/${String(c['tid'])}/` }),
+    });
+    expect(outcome.kind).toBe('signed-in');
+  });
+
+  it('falls back to the email claim only when Entra says the tenant owns its domain', async () => {
+    const email = `edov-${randomUUID().slice(0, 6)}@${MS_DOMAIN}`;
+    await preCreate(email);
+    const noUpn = (c: Record<string, unknown>) => ({ ...c, preferred_username: undefined });
+    expect((await signIn(email, { oid: randomUUID(), tamper: noUpn })).outcome.kind).toBe(
+      'refused',
+    );
+    const { outcome } = await signIn(email, {
+      oid: randomUUID(),
+      tamper: (c) => ({ ...noUpn(c), xms_edov: true }),
+    });
+    expect(outcome.kind).toBe('signed-in');
+  });
 });
 
 describe('Google Workspace', () => {

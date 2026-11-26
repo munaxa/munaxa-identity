@@ -16,7 +16,12 @@ record is [ADR-0007](../adr/0007-company-sign-in.md).
   in on the password form and cannot use password reset.
 - **Munaxa MFA still applies** (`MFA_POLICY`), unless the connection was created with
   `--trust-provider-mfa`, which accepts the company's own MFA instead. Use that only for a company
-  that enforces MFA in Entra Conditional Access or Google 2-Step Verification for every user.
+  that enforces MFA in Entra Conditional Access or Google 2-Step Verification for every user:
+  Identity cannot check it per sign-in (the id token carries no reliable evidence of MFA), so the
+  flag is the operator's written confirmation that the company enforces it.
+- **Members only.** Entra B2B guests (another company's users, personal Microsoft accounts invited
+  into the tenant) are refused. The first bind uses the user principal name, which Entra only
+  allows in a domain the company verified.
 - **Sessions are ordinary Munaxa sessions.** Work, Control, Docs and School see the same token as
   after a password sign-in. `amr` says `microsoft` or `google` (plus `totp` when a factor was used).
 
@@ -167,18 +172,19 @@ Google: `hd` must be the connection's domain and `email_verified` true.
 
 `auth.login.failed` reasons (audit and logs, never with an email address):
 
-| Reason                                                          | Meaning                                                               |
-| --------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `NOT_PROVISIONED`                                               | No pre-created company account for this person. Create it.            |
-| `ACCOUNT_NOT_ACTIVE`                                            | The account is disabled or locked.                                    |
-| `DOMAIN_NOT_OWNED`                                              | The provider returned an address outside the connection's domains.    |
-| `TENANT_MISMATCH`, `HOSTED_DOMAIN_MISMATCH`, `EMAIL_UNVERIFIED` | The person signed in to a different company's directory.              |
-| `ID_TOKEN_*`                                                    | The id token failed verification (signature, issuer, audience, …).    |
-| `PROVIDER_ERROR:<code>`                                         | The person cancelled, or the company's policy refused them.           |
-| `TOKEN_EXCHANGE_<status>`                                       | Microsoft/Google refused the code: usually a wrong or expired secret. |
-| `CONNECTION_UNAVAILABLE`                                        | The connection was disabled while the person was at the provider.     |
-| `MFA_UNAVAILABLE`                                               | MFA is required but this deployment has no MFA key ring.              |
-| `STATE_*`, `BINDING_*`, `USER_AGENT_MISMATCH` (logs only)       | An expired, replayed or cross-browser flow. Start again.              |
+| Reason                                                          | Meaning                                                                                      |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `NOT_PROVISIONED`                                               | No pre-created company account for this person. Create it.                                   |
+| `ACCOUNT_NOT_ACTIVE`                                            | The account is disabled or locked.                                                           |
+| `DOMAIN_NOT_OWNED`                                              | The provider returned an address outside the connection's domains.                           |
+| `TENANT_MISMATCH`, `HOSTED_DOMAIN_MISMATCH`, `EMAIL_UNVERIFIED` | The person signed in to a different company's directory.                                     |
+| `GUEST_ACCOUNT`                                                 | An Entra B2B guest (another company, or a personal Microsoft account). Only members sign in. |
+| `ID_TOKEN_*`                                                    | The id token failed verification (signature, issuer, audience, …).                           |
+| `PROVIDER_ERROR:<code>`                                         | The person cancelled, or the company's policy refused them.                                  |
+| `TOKEN_EXCHANGE_<status>`                                       | Microsoft/Google refused the code: usually a wrong or expired secret.                        |
+| `CONNECTION_UNAVAILABLE`                                        | The connection was disabled while the person was at the provider.                            |
+| `MFA_UNAVAILABLE`                                               | MFA is required but this deployment has no MFA key ring.                                     |
+| `STATE_*`, `BINDING_*`, `USER_AGENT_MISMATCH` (logs only)       | An expired, replayed or cross-browser flow. Start again.                                     |
 
 ## Secret rotation
 

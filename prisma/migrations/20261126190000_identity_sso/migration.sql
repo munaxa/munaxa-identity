@@ -83,8 +83,10 @@ ALTER TABLE "identity_account" ADD CONSTRAINT "ck_identity_account_source" CHECK
     OR ("identity_source" = 'federated' AND "identity_provider_id" IS NOT NULL AND "password_hash" IS NULL)
 );
 
-ALTER TABLE "identity_account" ADD CONSTRAINT "identity_account_identity_provider_id_fkey"
-    FOREIGN KEY ("identity_provider_id") REFERENCES "identity_sso_connection"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+-- Composite, so an account can only ever name a connection of its own organisation. A local account
+-- (provider null) is not checked, as MATCH SIMPLE intends.
+ALTER TABLE "identity_account" ADD CONSTRAINT "identity_account_identity_provider_id_tenant_id_fkey"
+    FOREIGN KEY ("identity_provider_id", "tenant_id") REFERENCES "identity_sso_connection"("id", "tenant_id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- ============================================================================
 -- Row-level security.

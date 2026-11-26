@@ -87,6 +87,16 @@ export const domainOf = (email: string): string | undefined =>
  * Apply a provider's own rules to claims whose signature, issuer, audience, expiry and nonce have
  * already been verified (`verifyIdToken`).
  */
+/** Whether an Entra `idp` claim names this tenant itself (v1 or v2 issuer form). */
+const ownIssuer = (idp: string, directoryId: string): boolean => {
+  const tenant = directoryId.toLowerCase();
+  const value = idp.toLowerCase().replace(/\/$/, '');
+  return (
+    value === `https://sts.windows.net/${tenant}` ||
+    value === `https://login.microsoftonline.com/${tenant}/v2.0`
+  );
+};
+
 export const personFrom = (
   provider: SsoProviderKind,
   directoryId: string,
@@ -100,10 +110,27 @@ export const personFrom = (
     }
     const oid = text(claims['oid']);
     if (oid === undefined || !GUID.test(oid)) return { ok: false, reason: 'NO_OBJECT_ID' };
-    // `email` is an optional claim the registration asks for; `preferred_username` is the sign-in
-    // name, which for a work account is the user principal name. Either is only ever used against
-    // a domain this connection owns and an account an operator pre-created with that address.
-    const email = (text(claims['email']) ?? text(claims['preferred_username']))?.toLowerCase();
+    // A B2B guest (another company's user, or a personal Microsoft account invited into the
+    // tenant) gets a token with this tenant's `iss` and `tid`, so the checks above pass. Its `idp`
+    // names where it really signed in: another tenant's issuer, or `live.com`. A member of the
+    // tenant carries no `idp`, or this tenant's own issuer. Anything else is a guest and is refused:
+    // the company's directory vouches only for its own people.
+    const idp = text(claims['idp']);
+    if (idp !== undefined && !ownIssuer(idp, directoryId)) {
+      return { ok: false, reason: 'GUEST_ACCOUNT' };
+    }
+    // The address used for the first bind is the user principal name (`preferred_username`), which
+    // Entra only lets an administrator set within a domain the tenant has verified. The optional
+    // `email` claim is not: a user or a guest can carry an unverified address there. It is used
+    // only when Entra says the tenant owns its domain (`xms_edov`). A guest's UPN carries `#EXT#`
+    // and lives under onmicrosoft.com, so it can never match a connection's domain either.
+    const upn = text(claims['preferred_username'])?.toLowerCase();
+    const verifiedEmail =
+      claims['xms_edov'] === true ? text(claims['email'])?.toLowerCase() : undefined;
+    const email =
+      upn !== undefined && !upn.includes('#ext#') && domainOf(upn) !== undefined
+        ? upn
+        : verifiedEmail;
     if (email === undefined || domainOf(email) === undefined) {
       return { ok: false, reason: 'NO_EMAIL' };
     }

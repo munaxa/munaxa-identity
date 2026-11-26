@@ -102,7 +102,7 @@ model IdentityAccount {
 
   tenant           IdentityTenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   /// The company directory a federated account signs in through; null for a local account.
-  ssoConnection    IdentitySsoConnection?    @relation(fields: [identityProviderId], references: [id], onDelete: Restrict)
+  ssoConnection    IdentitySsoConnection?    @relation(fields: [identityProviderId, tenantId], references: [id, tenantId], onDelete: Restrict)
   assignments      IdentityRoleAssignment[]
   mfaEnrollments   IdentityMfaEnrollment[]
   mfaRecoveryCodes IdentityMfaRecoveryCode[]
