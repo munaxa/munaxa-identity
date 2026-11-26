@@ -17,6 +17,7 @@ import {
   type Language,
 } from '../ui/password-recovery.page.js';
 import type { PasswordRecovery } from './password-recovery.js';
+import { withPageCsp } from '../ui/layout.js';
 
 /**
  * The password-recovery API and pages.
@@ -62,10 +63,10 @@ export class PasswordRecoveryController {
       return;
     }
     if (this.recovery.availability === 'unavailable') {
-      response.status(503).type('html').send(unavailablePage(language));
+      withPageCsp(response).status(503).type('html').send(unavailablePage(language));
       return;
     }
-    response
+    withPageCsp(response)
       .status(200)
       .type('html')
       .send(
@@ -100,7 +101,7 @@ export class PasswordRecoveryController {
       case 'unavailable':
         response.setHeader('retry-after', '60');
         if (form) {
-          response.status(503).type('html').send(unavailablePage(language));
+          withPageCsp(response).status(503).type('html').send(unavailablePage(language));
           return;
         }
         response.status(503).json({ code: 'AUTH_RESET_UNAVAILABLE' });
@@ -151,7 +152,7 @@ export class PasswordRecoveryController {
         response.status(503).json({ code: 'AUTH_RESET_UNAVAILABLE' });
         return;
       }
-      response.status(503).type('html').send(unavailablePage(language));
+      withPageCsp(response).status(503).type('html').send(unavailablePage(language));
       return;
     }
     if (json) {
@@ -159,10 +160,10 @@ export class PasswordRecoveryController {
       return;
     }
     if (state === 'invalid') {
-      response.status(200).type('html').send(invalidLinkPage(language));
+      withPageCsp(response).status(200).type('html').send(invalidLinkPage(language));
       return;
     }
-    response
+    withPageCsp(response)
       .status(200)
       .type('html')
       .send(resetPage({ language, organisation, token: token ?? '' }));
@@ -182,7 +183,7 @@ export class PasswordRecoveryController {
     const password = text(body.password);
 
     if (form && text(body.confirm) !== password) {
-      response
+      withPageCsp(response)
         .status(400)
         .type('html')
         .send(resetPage({ language, organisation, token, error: 'mismatch' }));
@@ -203,21 +204,21 @@ export class PasswordRecoveryController {
         // Clearing the cookies is housekeeping, not security: the server already refuses them.
         clearSessionCookies(response);
         if (form) {
-          response.status(200).type('html').send(donePage(language));
+          withPageCsp(response).status(200).type('html').send(donePage(language));
           return;
         }
         response.status(200).json({ ok: true });
         return;
       case 'invalid-token':
         if (form) {
-          response.status(400).type('html').send(invalidLinkPage(language));
+          withPageCsp(response).status(400).type('html').send(invalidLinkPage(language));
           return;
         }
         response.status(400).json({ code: 'AUTH_RESET_TOKEN_INVALID' });
         return;
       case 'password-rejected':
         if (form) {
-          response
+          withPageCsp(response)
             .status(422)
             .type('html')
             .send(
@@ -238,7 +239,7 @@ export class PasswordRecoveryController {
       default:
         response.setHeader('retry-after', '30');
         if (form) {
-          response
+          withPageCsp(response)
             .status(503)
             .type('html')
             .send(resetPage({ language, organisation, token, error: 'unavailable' }));

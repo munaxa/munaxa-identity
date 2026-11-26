@@ -14,6 +14,7 @@ import {
   issueChallengeCookie,
   issueCookies,
 } from './cookies.js';
+import { withPageCsp } from '../ui/layout.js';
 
 /**
  * The authentication API.
@@ -67,7 +68,7 @@ export class AuthController {
     @Query('error') error: string | undefined,
     @Res() response: Response,
   ): void {
-    response
+    withPageCsp(response)
       .status(200)
       .type('html')
       .send(

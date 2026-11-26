@@ -20,6 +20,8 @@
  * device (`prefers-color-scheme`), which needs none.
  */
 
+import { createHash } from 'node:crypto';
+
 export type Language = 'en' | 'ar';
 
 export const escapeHtml = (value: string): string =>
@@ -106,6 +108,28 @@ const STYLES = `
   .audited { margin: 0 0 1.25rem; text-align: center; font-size: .75rem; color: var(--muted-foreground); }
   @media (max-width: 420px) { main { padding: 1rem; } .card { padding: 1.5rem; } }
 `;
+
+/**
+ * The Content-Security-Policy every page response carries, replacing the edge's API policy.
+ *
+ * The edge (Platform's `apiOnly` headers) answers every route with `default-src 'none'`, which is
+ * right for JSON and wrong for these pages: the browser refused the inline styles and the data-URI
+ * mark, and the operator saw an unstyled form (Testing, 26 Nov 2026). This policy opens exactly two
+ * things: the one stylesheet below, by its hash rather than `'unsafe-inline'`, and `data:` images
+ * for the mark. Still no script source at all, no framing, no `<base>`, and nothing else may load.
+ * `form-action` is left as before (not governed by `default-src`).
+ */
+export const PAGE_CSP = `default-src 'none'; style-src 'sha256-${createHash('sha256')
+  .update(STYLES, 'utf8')
+  .digest('base64')}'; img-src data:; frame-ancestors 'none'; base-uri 'none'`;
+
+/** Sets {@link PAGE_CSP} on a response that is about to carry one of these pages. */
+export const withPageCsp = <R extends { setHeader(name: string, value: string): unknown }>(
+  response: R,
+): R => {
+  response.setHeader('content-security-policy', PAGE_CSP);
+  return response;
+};
 
 export interface FrameOptions {
   readonly language: Language;
