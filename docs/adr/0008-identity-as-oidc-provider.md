@@ -35,10 +35,13 @@ Docs and School sign people in by pointing their relying-party code at it.
 
 ### Review notes (26 Nov 2026)
 
-- `email_verified` is `true` because every Identity identifier is an address an operator
-  provisioned (or a company directory asserted, ADR-0007); there is no self-registration. Clients
-  must still key a person on `sub` together with `tid`/`org`, and use the address only to link a
-  pre-created product account the first time.
+- `email_verified` tells the truth (changed 26 Nov 2026, after Docs and School became
+  Munaxa-only for staff). It is `true` only when the address was shown to belong to the person:
+  the account is bound to its company directory (ADR-0007 binds by the address the directory
+  verified), a password recovery link sent to it was used, or a Munaxa operator recorded a
+  confirmation (`operator-cli account-email-verified`). Otherwise `false`. Docs and School link a
+  pre-created product account by address only when it is `true`, and key the person on `sub`
+  with `tid`/`org` from then on.
 - PKCE is enforced when sent and not yet required: Docs' relying party predates it. Requiring S256
   for every client is the next step once Docs sends it.
 - `prompt=login` and `max_age` are not implemented; a client needing a fresh sign-in cannot ask for

@@ -137,12 +137,13 @@ configuration, its mounted secrets and its `identity_app` connection, under the 
 security and audit chain as the service. Never pass a secret, a password or a database URL on the
 command line or as a task override: overrides are recorded in plain text.
 
-| Command                       | Changes                                                                                 | Needs                                           |
-| ----------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `mfa-reset`                   | Removes a factor and its recovery codes; bumps the token version; revokes every session | `--organisation`, `--account-id`, `--reference` |
-| `account-disable`             | Disables the account; bumps the token version; revokes every session                    | `--organisation`, `--account-id`, `--reference` |
-| `sessions-revoke-unsatisfied` | Revokes pre-enforcement (`mfa_satisfied = false`) sessions of covered accounts          | `--organisation`, `--reference`                 |
-| `mfa-reencrypt`               | Re-seals TOTP secrets under the primary key; audits `crypto.key.rotated`                | `--organisation`, `--reference`                 |
+| Command                       | Changes                                                                                                               | Needs                                           |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `mfa-reset`                   | Removes a factor and its recovery codes; bumps the token version; revokes every session                               | `--organisation`, `--account-id`, `--reference` |
+| `account-disable`             | Disables the account; bumps the token version; revokes every session                                                  | `--organisation`, `--account-id`, `--reference` |
+| `account-email-verified`      | Records that an operator confirmed the address belongs to the person (Docs and School need it for a password account) | `--organisation`, `--account-id`, `--reference` |
+| `sessions-revoke-unsatisfied` | Revokes pre-enforcement (`mfa_satisfied = false`) sessions of covered accounts                                        | `--organisation`, `--reference`                 |
+| `mfa-reencrypt`               | Re-seals TOTP secrets under the primary key; audits `crypto.key.rotated`                                              | `--organisation`, `--reference`                 |
 
 Every command is a dry run without `--apply`. `--reference` is a ticket or incident id (letters,
 digits, `. _ : -`; never a name or an email) and is carried into the audit record as the actor,

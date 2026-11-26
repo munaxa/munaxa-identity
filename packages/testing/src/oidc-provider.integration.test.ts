@@ -322,12 +322,37 @@ describe('the token leg', () => {
     expect(outcome.claims).toMatchObject({
       sub: someone.id,
       email: someone.identifier,
-      email_verified: true,
+      // A password account nobody has checked: the token says so (identity#33 review L-2).
+      email_verified: false,
       tid: org.id,
       org: org.key,
       amr: ['password'],
     });
     expect(outcome.claims).not.toHaveProperty('perms');
+  });
+
+  it('says the address is checked once an operator confirmed it or a recovery link was used', async () => {
+    const someone = await person();
+    const owner = await ownerPool.connect();
+    try {
+      await owner.query('begin');
+      await owner.query('select set_config($1, $2, true)', ['identity.tenant_id', org.id]);
+      await owner.query('update identity_account set email_verified_at = now() where id = $1', [
+        someone.id,
+      ]);
+      await owner.query('commit');
+    } finally {
+      owner.release();
+    }
+    const { code, url } = await codeFrom(await sessionFor(someone.identifier));
+    const body = (await (await redeemPost(code)).json()) as Record<string, unknown>;
+    const outcome = verifyIdToken(body['id_token'] as string, await keys(), {
+      issuers: [ISSUER],
+      audience: CLIENT,
+      nonce: url.searchParams.get('nonce')!,
+      now: new Date(),
+    });
+    expect(outcome.ok && outcome.claims['email_verified']).toBe(true);
   });
 
   it('accepts client_secret_basic', async () => {

@@ -5,6 +5,7 @@ import { buildSecurityStack } from '../platform/security.js';
 import {
   OperatorError,
   accountDisable,
+  accountEmailVerified,
   mfaReencrypt,
   mfaReset,
   revokeUnsatisfiedSessions,
@@ -25,6 +26,7 @@ import {
  * secrets, never with values typed on a command line (`docs/runbooks/mfa.md`). Commands:
  *
  *   mfa-reset                    remove a lost factor, end every session      --account-id --reference
+ *   account-email-verified       record that an operator confirmed the address  --account-id --reference
  *   account-disable              disable an account, end every session        --account-id --reference
  *   sessions-revoke-unsatisfied  end pre-enforcement sessions of covered accounts       --reference
  *   mfa-reencrypt                re-seal TOTP secrets under the primary MFA key          --reference
@@ -45,7 +47,7 @@ import {
  */
 
 const USAGE =
-  'usage: operator-cli <mfa-reset|account-disable|sessions-revoke-unsatisfied|mfa-reencrypt|' +
+  'usage: operator-cli <mfa-reset|account-disable|account-email-verified|sessions-revoke-unsatisfied|mfa-reencrypt|' +
   'sso-connection-add|sso-connection-enable|sso-connection-disable|sso-connection-list|' +
   'sso-account-create|sso-account-convert> ' +
   '--organisation <key> [--account-id <id> | --account <identifier>] [--reference <ticket>] [--apply]';
@@ -88,6 +90,15 @@ export const runCommand = async (deps: OperatorDeps, argv: readonly string[]): P
   switch (command) {
     case 'mfa-reset':
       await mfaReset(deps, {
+        organisation: options.organisation,
+        account: options.account,
+        accountId: options['account-id'],
+        reference: options.reference,
+        apply,
+      });
+      return;
+    case 'account-email-verified':
+      await accountEmailVerified(deps, {
         organisation: options.organisation,
         account: options.account,
         accountId: options['account-id'],

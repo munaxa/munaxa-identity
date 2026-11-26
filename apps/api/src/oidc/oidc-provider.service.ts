@@ -16,6 +16,7 @@ import {
 import type { Logger } from 'pino';
 
 import { resolvePrincipal } from '../auth/principal.js';
+import { PrismaService } from '../persistence/prisma.service.js';
 import type { SecurityStack } from '../platform/security.js';
 import { ENVIRONMENT, LOGGER, SECURITY_STACK } from '../tokens.js';
 
@@ -75,6 +76,8 @@ interface CodeRecord {
   readonly nonce: string;
   readonly codeChallenge?: string;
   readonly email: string;
+  /** Absent on a code minted before this field existed: read as unchecked. */
+  readonly emailVerified?: boolean;
   readonly amr: readonly string[];
   readonly mfa: boolean;
   readonly authTime: number;
@@ -106,6 +109,7 @@ export class OidcProviderService {
     @Inject(SECURITY_STACK) private readonly security: SecurityStack,
     @Inject(ENVIRONMENT) private readonly environment: IdentityEnvironment,
     @Inject(LOGGER) private readonly logger: Logger,
+    private readonly prisma: PrismaService,
   ) {
     // Startup has already refused a configuration with problems (`oidcProviderIssues`).
     this.clients = parseOidcClients(
@@ -249,6 +253,7 @@ export class OidcProviderService {
       nonce: query.nonce,
       ...(query.code_challenge === undefined ? {} : { codeChallenge: query.code_challenge }),
       email: account.identifier.trim().toLowerCase(),
+      emailVerified: await this.emailVerified(principal.tenantId, principal.userId),
       amr: [...(principal.claims.amr ?? ['password'])],
       mfa: principal.claims.mfa === true,
       authTime: Math.floor(principal.session.createdAt / 1_000),
@@ -367,7 +372,9 @@ export class OidcProviderService {
       amr: record.amr,
       ...(record.mfa ? { acr: 'mfa' } : {}),
       email: record.email,
-      email_verified: true,
+      // The truth, not a promise: Docs and School find their user by this address, and only
+      // trust it when it is checked (review L-2 of identity#33).
+      email_verified: record.emailVerified === true,
       tid: record.tenantId,
       org: record.organisation,
     });
@@ -396,6 +403,25 @@ export class OidcProviderService {
     const body = base64url(JSON.stringify(payload));
     const signature = this.security.signing.signer.sign(`${header}.${body}`);
     return `${header}.${body}.${signature.value}`;
+  }
+
+  /**
+   * Whether this account's address is known to belong to the person. A federated account is bound
+   * to its company directory by the address that directory verified (`SsoService.bind` matches the
+   * verified email before it records the subject), so a bound one is checked. A local account is
+   * checked once a recovery link sent to it was used, or a Munaxa operator recorded that they
+   * confirmed it (`account-email-verified`).
+   */
+  private async emailVerified(tenantId: TenantId, userId: UserId): Promise<boolean> {
+    const row = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.identityAccount.findFirst({
+        where: { tenantId, id: userId },
+        select: { identitySource: true, externalId: true, emailVerifiedAt: true },
+      }),
+    );
+    if (row === null) return false;
+    if (row.emailVerifiedAt !== null) return true;
+    return row.identitySource === 'federated' && row.externalId !== null;
   }
 
   private key(code: string): string {
