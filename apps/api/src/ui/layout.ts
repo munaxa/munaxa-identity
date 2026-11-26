@@ -123,6 +123,14 @@ export const PAGE_CSP = `default-src 'none'; style-src 'sha256-${createHash('sha
   .update(STYLES, 'utf8')
   .digest('base64')}'; img-src data:; frame-ancestors 'none'; base-uri 'none'`;
 
+/** Sets {@link PAGE_CSP} on a response that is about to carry one of these pages. */
+export const withPageCsp = <R extends { setHeader(name: string, value: string): unknown }>(
+  response: R,
+): R => {
+  response.setHeader('content-security-policy', PAGE_CSP);
+  return response;
+};
+
 export interface FrameOptions {
   readonly language: Language;
   readonly title: string;
