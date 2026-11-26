@@ -78,7 +78,9 @@ psql "postgresql://identity_mig:…@…/identity" -c "
   grant select, insert, update, delete on identity_account, identity_session,
     identity_refresh_token, identity_role, identity_role_assignment,
     identity_reset_token, identity_mfa_enrollment, identity_mfa_recovery_code to identity_app;
-  grant select, insert on identity_audit_event to identity_app;"
+  grant select, insert on identity_audit_event to identity_app;
+  grant select, insert, update on identity_sso_connection to identity_app;
+  grant select, insert, delete on identity_sso_domain to identity_app;"
 
 # Work's runtime grants
 psql "postgresql://work_mig:…@…/work" -c "

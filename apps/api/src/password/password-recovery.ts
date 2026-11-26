@@ -315,7 +315,13 @@ export class PasswordRecovery {
         // Platform's `complete` checks that the account exists, not that it may be used. A link
         // issued before an administrator disabled the account must not bring it back to life.
         const account = await this.#options.directory.findById(tenantId, ticket.userId);
-        if (account === undefined || account.status === 'disabled') {
+        // A link issued before the account became a company sign-in account must not set a
+        // password on it either (see `#process`).
+        if (
+          account === undefined ||
+          account.status === 'disabled' ||
+          account.passwordHash === null
+        ) {
           throw new PlatformError('Account cannot be recovered', {
             code: 'AUTH_RESET_TOKEN_INVALID',
           });
@@ -385,6 +391,13 @@ export class PasswordRecovery {
   ): Promise<void> {
     const tenantId = await this.#options.tenants.idForKey(organisation);
     if (tenantId === undefined) return;
+
+    // An account with no password signs in through its company's directory, and its password is
+    // the company's to reset. Issuing a link would let a mailbox set a Munaxa password on it, which
+    // is a way round the company's own controls (and the database refuses a federated row with a
+    // password anyway). The answer to the caller was already the uniform "accepted"; nothing is sent.
+    const holder = await this.#options.directory.findByIdentifier(tenantId, identifier);
+    if (holder !== undefined && holder.passwordHash === null) return;
 
     // A service per request, so the delivery callback knows which organisation the link is for and
     // who it went to. Construction is free; every rule still lives in Platform.

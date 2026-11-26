@@ -29,12 +29,20 @@ import { cacheKey, type TenantId, type UserId } from '@munaxa/types';
  */
 export type ChallengeKind = 'verify' | 'enroll';
 
+/**
+ * How the first factor was proven: a Munaxa password, or a company sign-in. Carried so the session
+ * the challenge becomes records the methods actually used (`amr`). Absent on challenges issued
+ * before company sign-in existed, which were all password challenges.
+ */
+export type PrimaryMethod = 'password' | 'microsoft' | 'google';
+
 export interface ChallengeRecord {
   readonly v: 1;
   readonly kind: ChallengeKind;
   readonly tenantId: TenantId;
   readonly userId: UserId;
   readonly tokenVersion: number;
+  readonly primary?: PrimaryMethod;
   readonly userAgentDigest: string;
   readonly createdAt: number;
   readonly expiresAt: number;
@@ -78,6 +86,7 @@ export class MfaChallenges {
     readonly tenantId: TenantId;
     readonly userId: UserId;
     readonly tokenVersion: number;
+    readonly primary?: PrimaryMethod;
     readonly userAgent?: string | undefined;
   }): Promise<IssuedChallenge> {
     const token = secureToken(32);
@@ -89,6 +98,9 @@ export class MfaChallenges {
       tenantId: input.tenantId,
       userId: input.userId,
       tokenVersion: input.tokenVersion,
+      ...(input.primary === undefined || input.primary === 'password'
+        ? {}
+        : { primary: input.primary }),
       userAgentDigest: userAgentDigest(input.userAgent),
       createdAt: now,
       expiresAt: now + ttl,

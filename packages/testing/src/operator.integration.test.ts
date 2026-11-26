@@ -546,6 +546,7 @@ describe('the command line', () => {
       command: 'mfa-reset',
       options: { organisation: 'acme', reference: 'INC-1' },
       apply: true,
+      switches: new Set(['apply']),
     });
     expect(() => parseArguments(['mfa-reset', 'acme'])).toThrow(OperatorError);
   });

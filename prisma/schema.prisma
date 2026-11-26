@@ -55,8 +55,10 @@ model IdentityTenant {
   status    String   @default("active")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  accounts    IdentityAccount[]
-  roles       IdentityRole[]
+  accounts       IdentityAccount[]
+  roles          IdentityRole[]
+  ssoConnections IdentitySsoConnection[]
+  ssoDomains     IdentitySsoDomain[]
 
   @@map("identity_tenant")
 }
@@ -72,33 +74,35 @@ model IdentityAccount {
   /// The `sub` claim, and an opaque platform identifier rather than a uuid. Identity mints UUIDs;
   /// the column does not require one, because `UserId` is a branded string and a column that
   /// rejects what the platform can produce fails on the platform's own vocabulary.
-  id                  String         @id
-  tenantId            String         @map("tenant_id")
+  id                   String         @id
+  tenantId             String         @map("tenant_id")
   /// As the person typed it. Shown back to nobody; kept for correspondence.
-  identifier          String
+  identifier           String
   /// Lower-cased and trimmed. The only column ever matched against.
-  identifierNormalized String        @map("identifier_normalized")
+  identifierNormalized String         @map("identifier_normalized")
   /// Null for an account that authenticates another way entirely. Absence never permits a sign-in.
-  passwordHash        String?        @map("password_hash")
+  passwordHash         String?        @map("password_hash")
   /// Which hasher produced `password_hash`, so a legacy algorithm can be upgraded on next login.
-  passwordAlgorithm   String?        @map("password_algorithm")
-  passwordUpdatedAt   DateTime?      @map("password_updated_at") @db.Timestamptz(6)
-  status              AccountStatus  @default(pending_verification)
+  passwordAlgorithm    String?        @map("password_algorithm")
+  passwordUpdatedAt    DateTime?      @map("password_updated_at") @db.Timestamptz(6)
+  status               AccountStatus  @default(pending_verification)
   /// Bumped to invalidate every token issued before the change. Copied into the `ver` claim.
-  tokenVersion        Int            @default(1) @map("token_version")
-  mfaEnrolled         Boolean        @default(false) @map("mfa_enrolled")
-  mustChangePassword  Boolean        @default(false) @map("must_change_password")
-  identitySource      IdentitySource @default(local) @map("identity_source")
-  externalId          String?        @map("external_id")
-  identityProviderId  String?        @map("identity_provider_id") @db.Uuid
-  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
-  createdBy           String?        @map("created_by")
-  updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
-  updatedBy           String?        @map("updated_by")
-  disabledAt          DateTime?      @map("disabled_at") @db.Timestamptz(6)
-  version             Int            @default(1)
+  tokenVersion         Int            @default(1) @map("token_version")
+  mfaEnrolled          Boolean        @default(false) @map("mfa_enrolled")
+  mustChangePassword   Boolean        @default(false) @map("must_change_password")
+  identitySource       IdentitySource @default(local) @map("identity_source")
+  externalId           String?        @map("external_id")
+  identityProviderId   String?        @map("identity_provider_id") @db.Uuid
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy            String?        @map("created_by")
+  updatedAt            DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy            String?        @map("updated_by")
+  disabledAt           DateTime?      @map("disabled_at") @db.Timestamptz(6)
+  version              Int            @default(1)
 
   tenant           IdentityTenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  /// The company directory a federated account signs in through; null for a local account.
+  ssoConnection    IdentitySsoConnection?    @relation(fields: [identityProviderId, tenantId], references: [id, tenantId], onDelete: Restrict)
   assignments      IdentityRoleAssignment[]
   mfaEnrollments   IdentityMfaEnrollment[]
   mfaRecoveryCodes IdentityMfaRecoveryCode[]
@@ -109,6 +113,52 @@ model IdentityAccount {
   @@unique([tenantId, identityProviderId, externalId], map: "uq_identity_account_external")
   @@index([tenantId, status], map: "ix_identity_account_status")
   @@map("identity_account")
+}
+
+/// A company directory an organisation signs in through: Microsoft Entra ID or Google Workspace.
+///
+/// No row-level security, like `identity_tenant`: company sign-in starts from an email address,
+/// before any organisation is known. No personal data and no credential is held here (the client
+/// secrets are the service's own configuration). See migration `20261126190000_identity_sso`.
+model IdentitySsoConnection {
+  id               String   @id @db.Uuid
+  tenantId         String   @map("tenant_id")
+  /// `microsoft` or `google`.
+  provider         String
+  /// The Entra tenant id (GUID) or the Google Workspace domain the id token must name.
+  directoryId      String   @map("directory_id")
+  /// Off until an operator turns it on, so a half-configured connection is never live.
+  enabled          Boolean  @default(false)
+  /// Whether this company's own MFA stands in for Munaxa's. Off unless the company asks for it.
+  trustProviderMfa Boolean  @default(false) @map("trust_provider_mfa")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  createdBy        String?  @map("created_by")
+  updatedBy        String?  @map("updated_by")
+
+  tenant   IdentityTenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  domains  IdentitySsoDomain[]
+  accounts IdentityAccount[]
+
+  @@unique([tenantId, provider, directoryId], map: "uq_identity_sso_connection_directory")
+  @@unique([id, tenantId], map: "uq_identity_sso_connection_tenant")
+  @@index([tenantId], map: "ix_identity_sso_connection_tenant")
+  @@map("identity_sso_connection")
+}
+
+/// An email domain, and the one connection its people sign in through (across all organisations).
+model IdentitySsoDomain {
+  domain       String   @id
+  connectionId String   @map("connection_id") @db.Uuid
+  tenantId     String   @map("tenant_id")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  /// Composite, so a domain can never name one organisation and point at another's connection.
+  connection IdentitySsoConnection @relation(fields: [connectionId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  tenant     IdentityTenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([connectionId], map: "ix_identity_sso_domain_connection")
+  @@map("identity_sso_domain")
 }
 
 /// A server-side session.
@@ -139,7 +189,6 @@ model IdentitySession {
   tokenVersion      Int       @map("token_version")
   attributes        Json?
 
-
   @@index([tenantId, accountId, revokedAt, idleExpiresAt, absoluteExpiresAt], map: "ix_identity_session_live")
   @@map("identity_session")
 }
@@ -162,7 +211,6 @@ model IdentityRefreshToken {
   revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
   revocationReason String?   @map("revocation_reason")
   tokenVersion     Int       @map("token_version")
-
 
   @@unique([tenantId, tokenHash], map: "uq_identity_refresh_token_hash")
   @@index([tenantId, familyId], map: "ix_identity_refresh_token_family")
@@ -228,7 +276,6 @@ model IdentityResetToken {
   revokedAt               DateTime? @map("revoked_at") @db.Timestamptz(6)
   passwordHashFingerprint String    @map("password_hash_fingerprint")
   requestIp               String?   @map("request_ip")
-
 
   @@unique([tenantId, tokenHash], map: "uq_identity_reset_token_hash")
   @@index([tenantId, accountId], map: "ix_identity_reset_token_account")

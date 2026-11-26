@@ -100,6 +100,11 @@ export class AuthService {
     return this.environment.SESSION_COOKIE_MAX_AGE;
   }
 
+  /** Whether the sign-in page offers company sign-in (`IDENTITY_SSO`). */
+  public get companySignInEnabled(): boolean {
+    return this.environment.IDENTITY_SSO === 'enabled';
+  }
+
   /** Whether the sign-in form must ask which organisation somebody belongs to. */
   public get hasDefaultOrganisation(): boolean {
     return this.environment.IDENTITY_DEFAULT_ORGANISATION.trim() !== '';

@@ -47,6 +47,22 @@ database and changing load-balancer logging are owner-approved deployment steps.
 - [ ] Any environment provisioned by hand (not by the migration job) applies **every** migration in
       order and the grant list in `docs/runbooks/staging-provisioning.md`, which now includes the MFA
       tables.
+- [ ] Migration `20261126190000_identity_sso` applied the same way before the image that contains
+      company sign-in starts. It adds `identity_sso_connection` (forced RLS,
+      `tenant_isolation`) and `identity_sso_domain` (forced RLS: anyone may look a domain up,
+      only its own organisation may add or remove it), the `ck_identity_account_source` check and
+      the provider foreign key. Additive: every existing account is `local` with no provider, which
+      satisfies the check.
+
+## 3a. Company sign-in (only when `IDENTITY_SSO=enabled`)
+
+- [ ] Client secrets in Secrets Manager, mounted as `IDENTITY_SSO_*_CLIENT_SECRET_FILE`; client
+      ids as plain variables. Redirect URI registered at Microsoft/Google for every Identity host
+      (`docs/runbooks/sso.md`). The Entra secret's expiry date is in the operations calendar.
+- [ ] Each organisation keeps one active password administrator with MFA (break-glass); the
+      convert command refuses the last one.
+- [ ] `MFA_POLICY` is not weakened for company accounts: use `--trust-provider-mfa` only for a
+      company that enforces MFA at its provider for every user.
 
 ## 4. Logs and edges (blocking before password reset is ever enabled)
 

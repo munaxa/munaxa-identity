@@ -77,6 +77,9 @@ IDENTITY_BASE_URL=https://id.test.munaxa.com \
 | `POST /api/auth/mfa/enrollment/confirm` | Confirms it; returns recovery codes once, ends other sessions.      |
 | `POST /api/auth/mfa/recovery-codes`     | Replaces every recovery code. Requires a recent step-up.            |
 | `DELETE /api/auth/mfa`                  | Removes the factor. Step-up required; refused when policy needs it. |
+| `GET /api/auth/sso`                     | Company sign-in page (Microsoft or Google), when enabled.           |
+| `POST /api/auth/sso/start`              | Work email in, redirect to the company's Microsoft or Google out.   |
+| `GET /api/auth/sso/callback`            | Back from the provider: session cookies, or the MFA challenge.      |
 | `GET /api/auth/health/{live,ready}`     | Readiness touches the database.                                     |
 
 ## Documentation
@@ -105,5 +108,6 @@ Stated here rather than discovered later.
   ([password recovery](./docs/runbooks/password-recovery.md)).
 - **There is no administration API.** Operator recovery (lost MFA device, account disable,
   enforcement roll-out, key re-encryption) is one-off commands: ADR-0006.
-- **Federation is not wired.** The account model carries `identity_source` and `external_id` from
-  the first migration so adopting an external provider later is not a backfill.
+- **Company sign-in (Microsoft 365, Google Workspace) is off by default** and needs pre-created
+  accounts: no account is created by signing in, and there is no self-service connection setup or
+  SCIM yet ([ADR-0007](./docs/adr/0007-company-sign-in.md), [runbook](./docs/runbooks/sso.md)).
